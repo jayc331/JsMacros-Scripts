@@ -1,5 +1,6 @@
 
 /// <reference lib = "ES2022"/>
+/// <reference path="./baritone.d.ts" />
 
 declare const __dirname: string;
 declare const __filename: string;
@@ -66,6 +67,7 @@ declare namespace Java {
      * Gets a java type  
      * Supports array type. ex: `int[]`, `short[][]`, `java.lang.String[]`
      */
+    export function type<C extends `baritone.api.${string}`>(className: C): GetJava.Type$Graal<C>;
     export function type<C extends string>(className: C): GetJava.Type$Graal<C>;
     export function type<C extends JavaTypeList | keyof GetJava.Primitives>(className: C): GetJava.Type$Graal<C>;
     export function from<T>(javaData: JavaArray<T>): T[];

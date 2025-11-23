@@ -2722,7 +2722,7 @@ declare namespace Reflection {
      */
     function loadMappingHelper(urlorfile: string): Packages.xyz.wagyourtail.jsmacros.core.classes.Mappings;
     /** @since 1.6.5 */
-    function wrapInstace<T>(instance: T): Packages.xyz.wagyourtail.jsmacros.core.classes.WrappedClassInstance<T>;
+    function wrapInstance<T>(instance: T): Packages.xyz.wagyourtail.jsmacros.core.classes.WrappedClassInstance<T>;
 
     /**
      * @throws ClassNotFoundException
