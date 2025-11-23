@@ -117,6 +117,16 @@ export default class Config {
         }
 
         rootConfig[id] = config;
-        FS.open(path).write(JSON.stringify(rootConfig, null, 4));
+        try {
+            // Ensure file exists before writing
+            if (!FS.exists(path)) {
+                FS.open(path).write('{}');
+            }
+            const file = FS.open(path);
+            file.write(JSON.stringify(rootConfig, null, 4));
+        } catch (e) {
+            ChatHelper.error(`Failed to write config file: ${e}`);
+            throw e;
+        }
     }
 }
