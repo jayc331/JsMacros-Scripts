@@ -1,3 +1,6 @@
+import { updateScript } from '../libs/Updater';
+updateScript(file.getAbsolutePath(), 'jayc331/JSMacros-Scripts', './config/jayc331-config.json');
+
 import Config from '../libs/Config';
 import { BaritoneAPI, BetterBlockPos } from '../libs/BaritoneAPIProvider';
 
