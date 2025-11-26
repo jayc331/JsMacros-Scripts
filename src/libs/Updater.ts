@@ -18,7 +18,7 @@ function getMetadata(release: GetReleasesResponse) {
     const metadataAsset = release.assets.find((asset) => asset.name === 'metadata.json');
     if (!metadataAsset) return;
 
-    const metadataUrl = release.assets[1].browser_download_url;
+    const metadataUrl = metadataAsset.browser_download_url;
     const req = Request.get(metadataUrl);
     if (req.responseCode !== 200) return;
 
@@ -27,7 +27,7 @@ function getMetadata(release: GetReleasesResponse) {
 
 // Returns whether the script was updated
 export function updateScript(path: string, repo: string, configPath: string): boolean {
-    const scriptFile = path.split('\\').pop();
+    const scriptFile = path.split(/[/\\]/).pop();
     const scriptName = scriptFile.split('.')[0];
     const latestRelease = getLatestReleaseInfo(repo);
     if (!latestRelease) {
@@ -41,7 +41,7 @@ export function updateScript(path: string, repo: string, configPath: string): bo
         return false;
     }
     if (!metadata[scriptName]) {
-        ChatHelper.error('[Updater] Metadata does not contain script info');
+        ChatHelper.warn(`[Updater] Metadata does not contain info for ${scriptName}`);
         return false;
     }
     const latestVersion = metadata[scriptName].version;

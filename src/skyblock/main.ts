@@ -21,8 +21,7 @@ interface StrafingConfig {
     options: {
         sneak: boolean;
         attackMode: AttackMode;
-        lockPitch: boolean;
-        targetPitch: number;
+        targetPitch: number | null;
         distanceThreshold: number;
     };
 }
@@ -39,10 +38,9 @@ class StrafingScript {
         options: {
             sneak: false,
             attackMode: 'hold',
-            lockPitch: false,
             targetPitch: 0,
-            distanceThreshold: 0.4
-        }
+            distanceThreshold: 0.5,
+        },
     };
 
     private config: StrafingConfig;
@@ -54,13 +52,13 @@ class StrafingScript {
     private statusMessage = '';
     private statusExpiry = 0;
     public isRunning = false; // Only flag needed for running/stopped state
-    
+
     // Key definitions for easy management
     private readonly keys = {
-        left: "key.keyboard.a",
-        right: "key.keyboard.d",
-        attack: "key.mouse.left",
-        sneak: "key.keyboard.left.shift" // Default sneak key, ideally configurable but safe default
+        left: 'key.keyboard.a',
+        right: 'key.keyboard.d',
+        attack: 'key.mouse.left',
+        sneak: 'key.keyboard.left.shift', // Default sneak key, ideally configurable but safe default
     };
 
     constructor() {
@@ -95,6 +93,24 @@ class StrafingScript {
         this.showStatus(`§7Set §e${option}§7 to §a${this.config.options[option]}`);
     }
 
+    public setPitch(pitch?: number) {
+        if (pitch !== undefined) {
+            this.config.options.targetPitch = pitch;
+            this.saveConfig();
+            this.showStatus(`§7Pitch locked to §a${pitch.toFixed(1)}`);
+        } else {
+            this.config.options.targetPitch = null;
+            this.saveConfig();
+            this.showStatus(`§7Pitch lock §cdisabled`);
+        }
+    }
+
+    public setDistanceThreshold(dist: number) {
+        this.config.options.distanceThreshold = dist;
+        this.saveConfig();
+        this.showStatus(`§7Distance threshold set to §a${dist.toFixed(2)}m`);
+    }
+
     private cleanupKeys() {
         KeyBind.key(this.keys.left, false);
         KeyBind.key(this.keys.right, false);
@@ -114,12 +130,12 @@ class StrafingScript {
         this.cleanupKeys();
         this.startTime = 0;
         this.totalDistance = 0;
-        this.showStatus("§cStrafing stopped.");
+        this.showStatus('§cStrafing stopped.');
     }
 
     public start() {
         if (this.isRunning) {
-            this.showStatus("§eStrafing is already running!");
+            this.showStatus('§eStrafing is already running!');
             return;
         }
 
@@ -127,7 +143,7 @@ class StrafingScript {
         const _2 = this.config.position['2'];
 
         if (isNaN(_1.x) || isNaN(_2.x)) {
-            Chat.log("§cPositions not set! Use /strafe set pos 1 and /strafe set pos 2");
+            Chat.log('§cPositions not set! Use /strafe set pos 1 and /strafe set pos 2');
             return;
         }
 
@@ -150,10 +166,13 @@ class StrafingScript {
 
         // Only attach listener if not already attached
         if (!this.tickListener) {
-            this.tickListener = JsMacros.on('Tick', JavaWrapper.methodToJava(() => this.tick()));
+            this.tickListener = JsMacros.on(
+                'Tick',
+                JavaWrapper.methodToJava(() => this.tick())
+            );
         }
 
-        this.showStatus("§aStrafing started!");
+        this.showStatus('§aStrafing started!');
     }
 
     private updateVisuals() {
@@ -191,8 +210,8 @@ class StrafingScript {
             if (this.lastPos) {
                 const dMove = Math.sqrt(
                     Math.pow(pPos.getX() - this.lastPos.x, 2) +
-                    Math.pow(pPos.getY() - this.lastPos.y, 2) +
-                    Math.pow(pPos.getZ() - this.lastPos.z, 2)
+                        Math.pow(pPos.getY() - this.lastPos.y, 2) +
+                        Math.pow(pPos.getZ() - this.lastPos.z, 2)
                 );
                 this.totalDistance += dMove;
             }
@@ -211,15 +230,16 @@ class StrafingScript {
             const dirZ = len > 0 ? dzRaw / len : 0;
 
             // Targets with offset
-            const offset = 0.45;
-            const t1 = { x: c1.x - (dirX * offset), y: c1.y, z: c1.z - (dirZ * offset) };
-            const t2 = { x: c2.x + (dirX * offset), y: c2.y, z: c2.z + (dirZ * offset) };
+            const offset = 0.0;
+            const t1 = { x: c1.x - dirX * offset, y: c1.y, z: c1.z - dirZ * offset };
+            const t2 = { x: c2.x + dirX * offset, y: c2.y, z: c2.z + dirZ * offset };
 
             // --- Look Logic ---
             const pathYaw = -Math.atan2(dxRaw, dzRaw) * (180 / Math.PI);
             const lookYaw = pathYaw - 90;
-            
-            const pitch = this.config.options.lockPitch ? this.config.options.targetPitch : player.getPitch();
+
+            const pitch =
+                this.config.options.targetPitch !== null ? this.config.options.targetPitch : player.getPitch();
             player.lookAt(lookYaw, pitch);
 
             // --- Switching Targets ---
@@ -235,9 +255,8 @@ class StrafingScript {
 
             // --- Inputs ---
             this.handleInputs();
-
         } catch (e) {
-            Chat.log("§cError in strafe tick: " + e);
+            Chat.log('§cError in strafe tick: ' + e);
             this.stop();
         }
     }
@@ -262,22 +281,27 @@ class StrafingScript {
             parts.push(`${m}m`);
         }
 
-        if (h === 0 && m === 0) { // Only seconds or seconds and milliseconds
+        if (h === 0 && m === 0) {
+            // Only seconds or seconds and milliseconds
             parts.push(`${sForDisplay.toFixed(1)}s`);
-        } else { // Has hours or minutes
+        } else {
+            // Has hours or minutes
             const sInt = Math.floor(sForDisplay);
-            if (sInt > 0) { // Only show integer seconds if it's greater than 0
+            if (sInt > 0) {
+                // Only show integer seconds if it's greater than 0
                 parts.push(`${sInt}s`);
             }
         }
-        
+
         // Handle case where elapsed is 0, so parts is empty
         if (parts.length === 0) {
             parts.push('0.0s');
         }
-        
+
         const timeString = parts.join(' ');
-        Chat.actionbar(`§eDist: ${this.totalDistance.toFixed(1)}m | Time: ${timeString} | Sneak: ${this.config.options.sneak ? 'ON' : 'OFF'}`);
+        Chat.actionbar(
+            `§eDist: ${this.totalDistance.toFixed(1)}m | Time: ${timeString} | Sneak: ${this.config.options.sneak ? 'ON' : 'OFF'}`
+        );
     }
 
     private handleInputs() {
@@ -318,61 +342,66 @@ const strafer = new StrafingScript();
 // Commands
 // =============================================================================
 
-try {
-    const cmd = Chat.getCommandManager();
-    
-    // Main command: /strafe
-    const main = cmd.createCommandBuilder('strafe');
-    
-    // /strafe start
-    main.literalArg('start')
-        .executes(JavaWrapper.methodToJava(() => strafer.start()))
-        .or() // Return to 'strafe' builder
-    // /strafe stop
+const CommandManager = Chat.getCommandManager();
+const commandName = 'strafe';
+
+CommandManager.unregisterCommand(commandName);
+
+CommandManager.createCommandBuilder(commandName)
+    .literalArg('start')
+    .executes(JavaWrapper.methodToJava(() => strafer.start()))
+    .or()
     .literalArg('stop')
-        .executes(JavaWrapper.methodToJava(() => strafer.stop()))
-        .or() // Return to 'strafe' builder
-    // /strafe set ...
+    .executes(JavaWrapper.methodToJava(() => strafer.stop()))
+    .or()
     .literalArg('set')
-        // /strafe set pos <1|2>
-        .literalArg('pos')
-            .intArg('position')
-            .suggestMatching('1', '2')
-            .executes(JavaWrapper.methodToJava((ctx: any) => {
-                const pos = ctx.getArg('position');
-                const player = Player.getPlayer();
-                if (player) strafer.setPosition(pos, player.getPos());
-            }))
-            .or() // Return to 'set' builder
-        // /strafe set sneak <true|false>
-        .literalArg('sneak')
-            .booleanArg('state')
-            .executes(JavaWrapper.methodToJava((ctx: any) => strafer.toggleOption('sneak', ctx.getArg('state'))))
-            .or() // Return to 'set' builder
-        // /strafe set attack <hold|none>
-        .literalArg('attack')
-            .wordArg('mode')
-            .suggestMatching('hold', 'none')
-            .executes(JavaWrapper.methodToJava((ctx: any) => strafer.toggleOption('attackMode', ctx.getArg('mode'))))
-            .or() // Return to 'set' builder
-        .or() // Return to 'strafe' builder
-    ;
+    .literalArg('pos')
+    .intArg('position')
+    .suggestMatching(['1', '2'])
+    .executes(
+        JavaWrapper.methodToJava((ctx: any) => {
+            const pos = ctx.getArg('position');
+            const player = Player.getPlayer();
+            if (player) strafer.setPosition(pos, player.getPos());
+        })
+    )
+    .or()
+    .or()
+    .literalArg('sneak')
+    .booleanArg('state')
+    .executes(JavaWrapper.methodToJava((ctx: any) => strafer.toggleOption('sneak', ctx.getArg('state'))))
+    .or()
+    .or()
+    .literalArg('attack')
+    .wordArg('mode')
+    .suggestMatching(['hold', 'none'])
+    .executes(JavaWrapper.methodToJava((ctx: any) => strafer.toggleOption('attackMode', ctx.getArg('mode'))))
+    .or()
+    .or()
+    .literalArg('pitch')
+    .executes(JavaWrapper.methodToJava(() => strafer.setPitch()))
+    .doubleArg('value')
+    .executes(JavaWrapper.methodToJava((ctx: any) => strafer.setPitch(ctx.getArg('value'))))
+    .or()
+    .or()
+    .literalArg('threshold')
+    .doubleArg('value')
+    .executes(JavaWrapper.methodToJava((ctx: any) => strafer.setDistanceThreshold(ctx.getArg('value'))))
+    .or()
+    .or()
+    .or()
+    .register();
 
-    main.register();
-
-    // Global Event Listeners
-    // Replaced custom onOpenScreen logic with direct check in tick()
-    JsMacros.on('OpenScreen', JavaWrapper.methodToJava((e) => {
+// Global Event Listeners
+JsMacros.on(
+    'OpenScreen',
+    JavaWrapper.methodToJava(() => {
         // If a screen opens, we ensure keys are released immediately,
         // as tick() will stop sending inputs due to Hud.getOpenScreen() check.
         if (strafer.isRunning) {
             strafer['cleanupKeys'](); // Access private method for immediate cleanup
         }
-    }));
-
-
-} catch (err) {
-    Chat.log("Error registering commands: " + err);
-}
+    })
+);
 
 export default event;
