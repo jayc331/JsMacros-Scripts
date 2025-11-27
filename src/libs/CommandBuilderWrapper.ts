@@ -1,164 +1,322 @@
 const CommandBuilder = Packages.xyz.wagyourtail.jsmacros.client.api.classes.inventory.CommandBuilder;
-const BlockPosHelper = Packages.xyz.wagyourtail.jsmacros.client.api.helpers.world.BlockPosHelper;
 
-type Command = {
-    literalArg?: string;
-    booleanArg?: string;
-    intArg?: string | { name: string; min: int; max: int };
-    intRangeArg?: string;
-    longArg?: string | { name: string; min: long; max: long };
-    floatRangeArg?: string;
-    doubleArg?: string | { name: string; min: double; max: double };
-    uuidArgType?: string;
-    greedyStringArg?: string;
-    quotedStringArg?: string;
-    wordArg?: string;
-    regexArgType?: {
-        name: string;
-        regex: string;
-        flags: string;
-    };
-    textArgType?: string;
-    timeArg?: string;
-    identifierArg?: string;
-    nbtArg?: string;
-    nbtElementArg?: string;
-    nbtCompoundArg?: string;
-    colorArg?: string;
-    angleArg?: string;
-    itemArg?: string;
-    itemStackArg?: string;
-    itemPredicateArg?: string;
-    blockArg?: string;
-    blockStateArg?: string;
-    blockPredicateArg?: string;
-    blockPosArg?: string;
-    columnPosArg?: string;
-    dimensionArg?: string;
-    itemSlotArg?: string;
-    particleArg?: string;
+export type ArgumentType =
+    | 'word'
+    | 'greedy'
+    | 'string'
+    | 'boolean'
+    | 'int'
+    | 'intRange'
+    | 'long'
+    | 'double'
+    | 'float'
+    | 'floatRange'
+    | 'uuid'
+    | 'regex'
+    | 'text'
+    | 'time'
+    | 'identifier'
+    | 'nbt'
+    | 'nbtElement'
+    | 'nbtCompound'
+    | 'color'
+    | 'angle'
+    | 'item'
+    | 'itemStack'
+    | 'itemPredicate'
+    | 'block'
+    | 'blockState'
+    | 'blockPredicate'
+    | 'blockPos'
+    | 'columnPos'
+    | 'dimension'
+    | 'itemSlot'
+    | 'particle';
 
-    executes?: (contextHelper: CommandContextHelper) => void;
-    suggest?: (contextHelper: CommandContextHelper, suggestionHelper: SuggestionsBuilderHelper) => void;
-    suggestMatching?: string[];
-    suggestIdentifier?: string[];
-    suggestBlockPositions?: BlockPosHelper[];
+export interface ArgumentOptions {
+    min?: number;
+    max?: number;
+    regex?: string;
+    flags?: string;
+}
 
-    children?: Command[];
-};
+export abstract class CommandNode {
+    protected children: CommandNode[] = [];
+    protected execution?: (ctx: Events.CommandContext) => void;
+    protected suggestionProvider?: (ctx: Events.CommandContext, builder: any) => void;
+    protected matchingSuggestions?: string[];
+    protected identifierSuggestions?: string[];
+    protected blockPositionSuggestions?: any[]; // BlockPosHelper[]
 
-class CommandBuilderWrapper {
-    private builder: CommandBuilder;
-    constructor(commandName: string) {
-        this.builder = Chat.getCommandManager().createCommandBuilder(commandName);
+    /**
+     * Adds a child node to this command node.
+     * @param node The child node to add.
+     */
+    then(node: CommandNode): this {
+        this.children.push(node);
+        return this;
     }
 
-    processCommands(commands: Command[]) {
-        for (const command of commands) {
-            this.processCommand(command);
+    /**
+     * Helper to add a literal child.
+     */
+    literal(name: string): LiteralNode {
+        const node = new LiteralNode(name);
+        this.then(node);
+        return node;
+    }
+
+    /**
+     * Helper to add an argument child.
+     */
+    argument(name: string, type: ArgumentType, options?: ArgumentOptions): ArgumentNode {
+        const node = new ArgumentNode(name, type, options);
+        this.then(node);
+        return node;
+    }
+
+    /**
+     * Sets the execution handler for this node.
+     */
+    executes(callback: (ctx: Events.CommandContext) => void): this {
+        this.execution = callback;
+        return this;
+    }
+
+    /**
+     * Sets a custom suggestion provider.
+     */
+    suggest(callback: (ctx: Events.CommandContext, builder: any) => void): this {
+        this.suggestionProvider = callback;
+        return this;
+    }
+
+    /**
+     * Sets a list of constant suggestions.
+     */
+    suggestMatching(suggestions: string[]): this {
+        this.matchingSuggestions = suggestions;
+        return this;
+    }
+
+    /**
+     * Sets a list of identifier suggestions.
+     */
+    suggestIdentifier(suggestions: string[]): this {
+        this.identifierSuggestions = suggestions;
+        return this;
+    }
+
+    /**
+     * Sets a list of block position suggestions.
+     */
+    suggestBlockPositions(suggestions: any[]): this {
+        this.blockPositionSuggestions = suggestions;
+        return this;
+    }
+
+    abstract apply(builder: any): void;
+
+    protected applyChildren(builder: any) {
+        if (this.execution) {
+            builder.executes(JavaWrapper.methodToJava(this.execution));
         }
-    }
 
-    processCommand(command: Command) {
-        const applyArgs = (node: Command, builder: CommandBuilder): CommandBuilder => {
-            if (node.literalArg) builder = builder.literalArg(node.literalArg);
-            if (node.booleanArg) builder = builder.booleanArg(node.booleanArg);
+        if (this.suggestionProvider) {
+            builder.suggest(JavaWrapper.methodToJava(this.suggestionProvider));
+        }
 
-            if (node.intArg) {
-                if (typeof node.intArg === 'string') {
-                    builder = builder.intArg(node.intArg);
-                } else {
-                    builder = builder.intArg(node.intArg.name, node.intArg.min, node.intArg.max);
-                }
-            }
+        if (this.matchingSuggestions) {
+            builder.suggestMatching(this.matchingSuggestions);
+        }
 
-            if (node.intRangeArg) builder = builder.intRangeArg(node.intRangeArg);
-            if (node.longArg) {
-                if (typeof node.longArg === 'string') {
-                    builder = builder.longArg(node.longArg);
-                } else {
-                    builder = builder.longArg(node.longArg.name, node.longArg.min, node.longArg.max);
-                }
-            }
-            if (node.floatRangeArg) builder = builder.floatRangeArg(node.floatRangeArg);
-            if (node.doubleArg) {
-                if (typeof node.doubleArg === 'string') {
-                    builder = builder.doubleArg(node.doubleArg);
-                } else {
-                    builder = builder.doubleArg(node.doubleArg.name, node.doubleArg.min, node.doubleArg.max);
-                }
-            }
-            if (node.uuidArgType) builder = builder.uuidArgType(node.uuidArgType);
-            if (node.greedyStringArg) builder = builder.greedyStringArg(node.greedyStringArg);
-            if (node.quotedStringArg) builder = builder.quotedStringArg(node.quotedStringArg);
-            if (node.wordArg) builder = builder.wordArg(node.wordArg);
+        if (this.identifierSuggestions) {
+            builder.suggestIdentifier(this.identifierSuggestions);
+        }
 
-            if (node.regexArgType) {
-                const { name, regex, flags } = node.regexArgType;
-                builder = builder.regexArgType(name, regex, flags);
-            }
+        if (this.blockPositionSuggestions) {
+            builder.suggestBlockPositions(this.blockPositionSuggestions);
+        }
 
-            if (node.textArgType) builder = builder.textArgType(node.textArgType);
-            if (node.timeArg) builder = builder.timeArg(node.timeArg);
-            if (node.identifierArg) builder = builder.identifierArg(node.identifierArg);
-            if (node.nbtArg) builder = builder.nbtArg(node.nbtArg);
-            if (node.nbtElementArg) builder = builder.nbtElementArg(node.nbtElementArg);
-            if (node.nbtCompoundArg) builder = builder.nbtCompoundArg(node.nbtCompoundArg);
-            if (node.colorArg) builder = builder.colorArg(node.colorArg);
-            if (node.angleArg) builder = builder.angleArg(node.angleArg);
-            if (node.itemArg) builder = builder.itemArg(node.itemArg);
-            if (node.itemStackArg) builder = builder.itemStackArg(node.itemStackArg);
-            if (node.itemPredicateArg) builder = builder.itemPredicateArg(node.itemPredicateArg);
-            if (node.blockArg) builder = builder.blockArg(node.blockArg);
-            if (node.blockStateArg) builder = builder.blockStateArg(node.blockStateArg);
-            if (node.blockPredicateArg) builder = builder.blockPredicateArg(node.blockPredicateArg);
-            if (node.blockPosArg) builder = builder.blockPosArg(node.blockPosArg);
-            if (node.columnPosArg) builder = builder.columnPosArg(node.columnPosArg);
-            if (node.dimensionArg) builder = builder.dimensionArg(node.dimensionArg);
-            if (node.itemSlotArg) builder = builder.itemSlotArg(node.itemSlotArg);
-            if (node.particleArg) builder = builder.particleArg(node.particleArg);
-
-            if (node.suggestMatching && node.suggestMatching.length > 0) {
-                builder = builder.suggestMatching(node.suggestMatching);
-            }
-
-            if (node.suggestIdentifier && node.suggestIdentifier.length > 0) {
-                builder = builder.suggestIdentifier(node.suggestIdentifier);
-            }
-
-            if (node.suggestBlockPositions && node.suggestBlockPositions.length > 0) {
-                builder = builder.suggestBlockPositions(node.suggestBlockPositions);
-            }
-
-            if (node.executes) {
-                builder = builder.executes(JavaWrapper.methodToJava(node.executes));
-            }
-
-            if (node.suggest) {
-                builder = builder.suggest(JavaWrapper.methodToJava(node.suggest));
-            }
-
-            if (node.children && Array.isArray(node.children)) {
-                node.children.forEach((child) => {
-                    builder = applyArgs(child, builder);
-                });
-            }
-
-            builder = builder.or();
-            return builder;
-        };
-
-        this.builder = applyArgs(command, this.builder);
-        return this.builder;
-    }
-
-    register() {
-        this.builder.register();
-    }
-
-    unregister() {
-        this.builder.unregister();
+        for (const child of this.children) {
+            child.apply(builder);
+        }
     }
 }
 
-export default CommandBuilderWrapper;
+export class LiteralNode extends CommandNode {
+    constructor(private name: string) {
+        super();
+    }
+
+    apply(builder: any) {
+        builder.literalArg(this.name);
+        this.applyChildren(builder);
+        builder.or(); // Return to parent context after processing this branch
+    }
+}
+
+export class ArgumentNode extends CommandNode {
+    constructor(
+        private name: string,
+        private type: ArgumentType,
+        private options?: ArgumentOptions
+    ) {
+        super();
+    }
+
+    apply(builder: any) {
+        switch (this.type) {
+            case 'word':
+                builder.wordArg(this.name);
+                break;
+            case 'greedy':
+                builder.greedyStringArg(this.name);
+                break;
+            case 'string':
+                builder.quotedStringArg(this.name);
+                break;
+            case 'boolean':
+                builder.booleanArg(this.name);
+                break;
+
+            case 'int':
+                if (this.options?.min !== undefined || this.options?.max !== undefined)
+                    builder.intArg(this.name, this.options.min ?? -2147483648, this.options.max ?? 2147483647);
+                else builder.intArg(this.name);
+                break;
+            case 'intRange':
+                builder.intRangeArg(this.name);
+                break;
+
+            case 'long':
+                if (this.options?.min !== undefined || this.options?.max !== undefined)
+                    builder.longArg(
+                        this.name,
+                        this.options.min ?? -9223372036854775808,
+                        this.options.max ?? 9223372036854775807
+                    );
+                else builder.longArg(this.name);
+                break;
+
+            case 'double':
+                if (this.options?.min !== undefined || this.options?.max !== undefined)
+                    builder.doubleArg(
+                        this.name,
+                        this.options.min ?? -Number.MAX_VALUE,
+                        this.options.max ?? Number.MAX_VALUE
+                    );
+                else builder.doubleArg(this.name);
+                break;
+
+            case 'float':
+                builder.floatArg(this.name);
+                break; // Assuming floatArg exists in API if double does, or fallback to double logic? Wrapper had floatRangeArg.
+            case 'floatRange':
+                builder.floatRangeArg(this.name);
+                break;
+
+            case 'uuid':
+                builder.uuidArgType(this.name);
+                break;
+
+            case 'regex':
+                if (this.options?.regex) {
+                    builder.regexArgType(this.name, this.options.regex, this.options.flags ?? '');
+                } else {
+                    // Fallback or error? Default to word if no regex provided is safer than crashing.
+                    builder.wordArg(this.name);
+                }
+                break;
+
+            case 'text':
+                builder.textArgType(this.name);
+                break;
+            case 'time':
+                builder.timeArg(this.name);
+                break;
+            case 'identifier':
+                builder.identifierArg(this.name);
+                break;
+            case 'nbt':
+                builder.nbtArg(this.name);
+                break;
+            case 'nbtElement':
+                builder.nbtElementArg(this.name);
+                break;
+            case 'nbtCompound':
+                builder.nbtCompoundArg(this.name);
+                break;
+            case 'color':
+                builder.colorArg(this.name);
+                break;
+            case 'angle':
+                builder.angleArg(this.name);
+                break;
+            case 'item':
+                builder.itemArg(this.name);
+                break;
+            case 'itemStack':
+                builder.itemStackArg(this.name);
+                break;
+            case 'itemPredicate':
+                builder.itemPredicateArg(this.name);
+                break;
+            case 'block':
+                builder.blockArg(this.name);
+                break;
+            case 'blockState':
+                builder.blockStateArg(this.name);
+                break;
+            case 'blockPredicate':
+                builder.blockPredicateArg(this.name);
+                break;
+            case 'blockPos':
+                builder.blockPosArg(this.name);
+                break;
+            case 'columnPos':
+                builder.columnPosArg(this.name);
+                break;
+            case 'dimension':
+                builder.dimensionArg(this.name);
+                break;
+            case 'itemSlot':
+                builder.itemSlotArg(this.name);
+                break;
+            case 'particle':
+                builder.particleArg(this.name);
+                break;
+
+            default:
+                builder.wordArg(this.name);
+        }
+        this.applyChildren(builder);
+        builder.or(); // Return to parent context
+    }
+}
+
+export class RootNode extends CommandNode {
+    private builder: any;
+
+    constructor(name: string) {
+        super();
+        this.builder = Chat.getCommandManager().createCommandBuilder(name);
+    }
+
+    apply(builder: any) {
+        // Root execution is applied directly to the root builder
+        this.applyChildren(this.builder);
+    }
+
+    register() {
+        this.apply(null);
+        this.builder.register();
+    }
+}
+
+export class CommandManager {
+    static create(name: string): RootNode {
+        Chat.getCommandManager().unregisterCommand(name);
+        return new RootNode(name);
+    }
+}

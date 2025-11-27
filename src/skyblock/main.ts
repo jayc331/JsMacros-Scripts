@@ -3,6 +3,8 @@ updateScript(file.getAbsolutePath(), 'jayc331/JSMacros-Scripts', './config/jayc3
 
 import Config from '../libs/Config';
 import { BaritoneAPI, BetterBlockPos } from '../libs/BaritoneAPIProvider';
+import { Key } from '../libs/KeyManager';
+import { CommandManager } from '../libs/CommandBuilderWrapper';
 
 // =============================================================================
 // Types & Interfaces
@@ -14,15 +16,28 @@ interface Position {
     z: number;
 }
 
-type AttackMode = 'hold' | 'none';
+type InteractionMode = 'hold' | 'click' | 'none';
+type InteractionKey = 'left' | 'right';
+type Direction = 'left' | 'right' | 'both';
+
+interface DirectionConfig<T> {
+    left: T;
+    right: T;
+}
+
+interface InteractionConfig {
+    key: InteractionKey;
+    mode: InteractionMode;
+    cps?: number;
+}
 
 interface StrafingConfig {
     position: { '1': Position; '2': Position };
     options: {
-        sneak: boolean;
-        attackMode: AttackMode;
-        targetPitch: number | null;
-        distanceThreshold: number;
+        sneak: DirectionConfig<boolean>;
+        interact: DirectionConfig<InteractionConfig>;
+        pitch: DirectionConfig<number | null>;
+        threshold: DirectionConfig<number>;
     };
 }
 
@@ -36,10 +51,30 @@ class StrafingScript {
     private readonly defaultConfig: StrafingConfig = {
         position: { '1': { x: NaN, y: NaN, z: NaN }, '2': { x: NaN, y: NaN, z: NaN } },
         options: {
-            sneak: false,
-            attackMode: 'hold',
-            targetPitch: 0,
-            distanceThreshold: 0.5,
+            sneak: {
+                left: false,
+                right: false,
+            },
+            interact: {
+                left: {
+                    key: 'left',
+                    mode: 'hold',
+                    cps: 4, // Default CPS
+                },
+                right: {
+                    key: 'right',
+                    mode: 'click',
+                    cps: 4, // Default CPS
+                },
+            },
+            pitch: {
+                left: -22,
+                right: -32,
+            },
+            threshold: {
+                left: 0.4,
+                right: 0.4,
+            },
         },
     };
 
@@ -52,13 +87,14 @@ class StrafingScript {
     private statusMessage = '';
     private statusExpiry = 0;
     public isRunning = false; // Only flag needed for running/stopped state
-
-    // Key definitions for easy management
+    private lastClickTime: { left: number; right: number } = { left: 0, right: 0 };
+    // Key definitions
     private readonly keys = {
-        left: 'key.keyboard.a',
-        right: 'key.keyboard.d',
-        attack: 'key.mouse.left',
-        sneak: 'key.keyboard.left.shift', // Default sneak key, ideally configurable but safe default
+        left: new Key('key.keyboard.a'),
+        right: new Key('key.keyboard.d'),
+        mouseLeft: new Key('key.mouse.left'),
+        mouseRight: new Key('key.mouse.right'),
+        sneak: new Key('key.keyboard.left.shift'),
     };
 
     constructor() {
@@ -83,39 +119,85 @@ class StrafingScript {
         this.updateVisuals();
     }
 
-    public toggleOption(option: keyof StrafingConfig['options'], value?: any) {
-        if (value !== undefined) {
-            (this.config.options as any)[option] = value;
-        } else if (typeof this.config.options[option] === 'boolean') {
-            (this.config.options as any)[option] = !this.config.options[option];
+    public setSneak(state: boolean, direction: Direction = 'both') {
+        if (direction === 'both' || direction === 'left') {
+            this.config.options.sneak.left = state;
+        }
+        if (direction === 'both' || direction === 'right') {
+            this.config.options.sneak.right = state;
         }
         this.saveConfig();
-        this.showStatus(`§7Set §e${option}§7 to §a${this.config.options[option]}`);
+        this.showStatus(`§7Sneak set to §a${state}§7 for §e${direction}`);
     }
 
-    public setPitch(pitch?: number) {
-        if (pitch !== undefined) {
-            this.config.options.targetPitch = pitch;
-            this.saveConfig();
-            this.showStatus(`§7Pitch locked to §a${pitch.toFixed(1)}`);
-        } else {
-            this.config.options.targetPitch = null;
-            this.saveConfig();
-            this.showStatus(`§7Pitch lock §cdisabled`);
+    public setInteract({
+        mode,
+        key,
+        cps,
+        direction = 'both',
+    }: {
+        mode?: InteractionMode;
+        key?: InteractionKey;
+        cps?: number;
+        direction?: Direction;
+    }) {
+        if (direction === 'both' || direction === 'left') {
+            const leftConfig = { ...this.config.options.interact.left };
+            if (mode !== undefined) leftConfig.mode = mode;
+            if (key !== undefined) leftConfig.key = key;
+            if (cps !== undefined) leftConfig.cps = cps;
+            this.config.options.interact.left = leftConfig;
         }
+        if (direction === 'both' || direction === 'right') {
+            const rightConfig = { ...this.config.options.interact.right };
+            if (mode !== undefined) rightConfig.mode = mode;
+            if (key !== undefined) rightConfig.key = key;
+            if (cps !== undefined) rightConfig.cps = cps;
+            this.config.options.interact.right = rightConfig;
+        }
+        this.saveConfig();
+        // For status message, show what was actually set (or current value if not set)
+        const finalMode =
+            mode ??
+            (direction === 'right' ? this.config.options.interact.right.mode : this.config.options.interact.left.mode);
+        const finalKey =
+            key ??
+            (direction === 'right' ? this.config.options.interact.right.key : this.config.options.interact.left.key);
+        const finalCps =
+            cps ??
+            (direction === 'right' ? this.config.options.interact.right.cps : this.config.options.interact.left.cps);
+        this.showStatus(`§7Interact set to §a${finalMode}§7 (${finalKey}, ${finalCps} CPS) for §e${direction}`);
     }
 
-    public setDistanceThreshold(dist: number) {
-        this.config.options.distanceThreshold = dist;
+    public setPitch({ pitch, direction = 'both' }: { pitch: number | null; direction?: Direction }) {
+        if (direction === 'both' || direction === 'left') {
+            this.config.options.pitch.left = pitch;
+        }
+        if (direction === 'both' || direction === 'right') {
+            this.config.options.pitch.right = pitch;
+        }
         this.saveConfig();
-        this.showStatus(`§7Distance threshold set to §a${dist.toFixed(2)}m`);
+        const valStr = pitch === null ? 'disabled' : pitch.toFixed(1);
+        this.showStatus(`§7Pitch set to §a${valStr}§7 for §e${direction}`);
+    }
+
+    public setDistanceThreshold(dist: number, direction: Direction = 'both') {
+        if (direction === 'both' || direction === 'left') {
+            this.config.options.threshold.left = dist;
+        }
+        if (direction === 'both' || direction === 'right') {
+            this.config.options.threshold.right = dist;
+        }
+        this.saveConfig();
+        this.showStatus(`§7Threshold set to §a${dist.toFixed(2)}m§7 for §e${direction}`);
     }
 
     private cleanupKeys() {
-        KeyBind.key(this.keys.left, false);
-        KeyBind.key(this.keys.right, false);
-        KeyBind.key(this.keys.attack, false);
-        KeyBind.key(this.keys.sneak, false);
+        this.keys.left.release();
+        this.keys.right.release();
+        this.keys.mouseLeft.release();
+        this.keys.mouseRight.release();
+        this.keys.sneak.release();
     }
 
     public stop() {
@@ -142,7 +224,7 @@ class StrafingScript {
         const _1 = this.config.position['1'];
         const _2 = this.config.position['2'];
 
-        if (isNaN(_1.x) || isNaN(_2.x)) {
+        if (isNaN(_1.x) || isNaN(_1.y) || isNaN(_1.z) || isNaN(_2.x) || isNaN(_2.y) || isNaN(_2.z)) {
             Chat.log('§cPositions not set! Use /strafe set pos 1 and /strafe set pos 2');
             return;
         }
@@ -155,14 +237,14 @@ class StrafingScript {
             const pos2 = new (BetterBlockPos as any)(_2.x, _2.y, _2.z);
             BaritoneAPI.getProvider().getPrimaryBaritone().getSelectionManager().addSelection(pos1, pos2);
         } catch (e) {
-            // Ignore errors if visual selection fails (e.g. Baritone not ready)
+            // Ignore errors
         }
 
-        // Reset stats on fresh start
+        // Reset stats
         this.currentTarget = 2;
         this.startTime = Date.now();
         this.totalDistance = 0;
-        this.lastPos = null; // Reset lastPos for fresh distance tracking
+        this.lastPos = null;
 
         // Only attach listener if not already attached
         if (!this.tickListener) {
@@ -180,23 +262,21 @@ class StrafingScript {
             const primary = BaritoneAPI.getProvider().getPrimaryBaritone();
             const _1 = this.config.position['1'];
             const _2 = this.config.position['2'];
-            if (!isNaN(_1.x) && !isNaN(_2.x)) {
+            if (!isNaN(_1.x) && !isNaN(_1.y) && !isNaN(_1.z) && !isNaN(_2.x) && !isNaN(_2.y) && !isNaN(_2.z)) {
                 const pos1 = new (BetterBlockPos as any)(_1.x, _1.y, _1.z);
                 const pos2 = new (BetterBlockPos as any)(_2.x, _2.y, _2.z);
                 primary.getSelectionManager().addSelection(pos1, pos2);
             }
         } catch (e) {
-            // Baritone not ready or error
+            // Ignore
         }
     }
 
     private tick() {
         try {
-            // Stop if not running or if a screen is open
             if (!this.isRunning || Hud.getOpenScreen()) {
-                // Ensure keys are released if we just opened a screen and were running
                 if (Hud.getOpenScreen()) {
-                    this.cleanupKeys(); // Ensure keys are cleared when a screen opens.
+                    this.cleanupKeys();
                 }
                 return;
             }
@@ -226,42 +306,45 @@ class StrafingScript {
             const dxRaw = c2.x - c1.x;
             const dzRaw = c2.z - c1.z;
             const len = Math.sqrt(dxRaw * dxRaw + dzRaw * dzRaw);
-            const dirX = len > 0 ? dxRaw / len : 0;
-            const dirZ = len > 0 ? dzRaw / len : 0;
 
-            // Targets with offset
-            const offset = 0.0;
-            const t1 = { x: c1.x - dirX * offset, y: c1.y, z: c1.z - dirZ * offset };
-            const t2 = { x: c2.x + dirX * offset, y: c2.y, z: c2.z + dirZ * offset };
+            // Targets
+            const t1 = { x: c1.x, y: c1.y, z: c1.z };
+            const t2 = { x: c2.x, y: c2.y, z: c2.z };
 
             // --- Look Logic ---
             const pathYaw = -Math.atan2(dxRaw, dzRaw) * (180 / Math.PI);
             const lookYaw = pathYaw - 90;
 
-            const pitch =
-                this.config.options.targetPitch !== null ? this.config.options.targetPitch : player.getPitch();
+            // Determine current 'direction' phase
+            // If target is 2, we are moving 'right' (towards 2) relative to start
+            // If target is 1, we are moving 'left' (towards 1)
+            const currentDirection: 'left' | 'right' = this.currentTarget === 2 ? 'right' : 'left';
+
+            const pitchConfig = this.config.options.pitch[currentDirection];
+            const pitch = pitchConfig !== null ? pitchConfig : player.getPitch();
             player.lookAt(lookYaw, pitch);
 
             // --- Switching Targets ---
             const targetPos = this.currentTarget === 1 ? t1 : t2;
             const dist = Math.sqrt(Math.pow(pPos.getX() - targetPos.x, 2) + Math.pow(pPos.getZ() - targetPos.z, 2));
 
-            if (dist < this.config.options.distanceThreshold) {
+            const threshold = this.config.options.threshold[currentDirection];
+            if (dist < threshold) {
                 this.currentTarget = this.currentTarget === 1 ? 2 : 1;
             }
 
             // --- HUD ---
-            this.updateHud();
+            this.updateHud(currentDirection);
 
             // --- Inputs ---
-            this.handleInputs();
+            this.handleInputs(currentDirection);
         } catch (e) {
             Chat.log('§cError in strafe tick: ' + e);
             this.stop();
         }
     }
 
-    private updateHud() {
+    private updateHud(currentDirection: Direction) {
         if (Date.now() < this.statusExpiry) {
             Chat.actionbar(this.statusMessage);
             return;
@@ -270,63 +353,58 @@ class StrafingScript {
         const elapsed = (Date.now() - this.startTime) / 1000;
         const h = Math.floor(elapsed / 3600);
         const m = Math.floor((elapsed % 3600) / 60);
-        const sForDisplay = elapsed % 60; // Retain decimals for now
+        const s = elapsed % 60;
 
-        const parts = [];
+        const timeParts = [];
+        if (h > 0) timeParts.push(`${h}h`);
+        if (m > 0) timeParts.push(`${m}m`);
+        if (h === 0 && m === 0) timeParts.push(`${s.toFixed(1)}s`);
+        else if (Math.floor(s) > 0) timeParts.push(`${Math.floor(s)}s`);
+        if (timeParts.length === 0) timeParts.push('0.0s');
 
-        if (h > 0) {
-            parts.push(`${h}h`);
-        }
-        if (m > 0) {
-            parts.push(`${m}m`);
-        }
+        const timeString = timeParts.join(' ');
+        const sneak = this.config.options.sneak[currentDirection] ? 'ON' : 'OFF';
+        const interact = this.config.options.interact[currentDirection].mode;
 
-        if (h === 0 && m === 0) {
-            // Only seconds or seconds and milliseconds
-            parts.push(`${sForDisplay.toFixed(1)}s`);
-        } else {
-            // Has hours or minutes
-            const sInt = Math.floor(sForDisplay);
-            if (sInt > 0) {
-                // Only show integer seconds if it's greater than 0
-                parts.push(`${sInt}s`);
-            }
-        }
-
-        // Handle case where elapsed is 0, so parts is empty
-        if (parts.length === 0) {
-            parts.push('0.0s');
-        }
-
-        const timeString = parts.join(' ');
         Chat.actionbar(
-            `§eDist: ${this.totalDistance.toFixed(1)}m | Time: ${timeString} | Sneak: ${this.config.options.sneak ? 'ON' : 'OFF'}`
+            `§eDist: ${this.totalDistance.toFixed(1)}m | Time: ${timeString} | Dir: ${currentDirection.toUpperCase()} | Sneak: ${sneak} | Int: ${interact}`
         );
     }
 
-    private handleInputs() {
+    private handleInputs(dir: 'left' | 'right') {
         // Movement
-        if (this.currentTarget === 2) {
-            KeyBind.key(this.keys.right, true);
-            KeyBind.key(this.keys.left, false);
+        if (dir === 'right') {
+            this.keys.right.set(true);
+            this.keys.left.set(false);
         } else {
-            KeyBind.key(this.keys.right, false);
-            KeyBind.key(this.keys.left, true);
+            this.keys.right.set(false);
+            this.keys.left.set(true);
         }
 
         // Sneak
-        KeyBind.key(this.keys.sneak, this.config.options.sneak);
+        this.keys.sneak.set(this.config.options.sneak[dir]);
 
-        // Attack
-        const mode = this.config.options.attackMode;
-        if (mode === 'hold') {
-            KeyBind.key(this.keys.attack, true);
+        // Interact
+        const interact = this.config.options.interact[dir];
+        const key = interact.key === 'left' ? this.keys.mouseLeft : this.keys.mouseRight;
+        const otherKey = interact.key === 'left' ? this.keys.mouseRight : this.keys.mouseLeft;
+
+        // Release other key to prevent stuck keys
+        otherKey.set(false);
+
+        if (interact.mode === 'click') {
+            const currentCps = interact.cps ?? this.defaultConfig.options.interact[dir].cps ?? 10;
+            const delayMs = 1000 / currentCps;
+            if (Date.now() - this.lastClickTime[dir] >= delayMs) {
+                key.click();
+                this.lastClickTime[dir] = Date.now();
+            }
+        } else if (interact.mode === 'hold') {
+            key.set(true);
         } else {
-            KeyBind.key(this.keys.attack, false);
+            key.set(false);
         }
     }
-
-    // Removed onOpenScreen listener to simplify state management
 }
 
 // =============================================================================
@@ -342,64 +420,164 @@ const strafer = new StrafingScript();
 // Commands
 // =============================================================================
 
-const CommandManager = Chat.getCommandManager();
-const commandName = 'strafe';
+const strafe = CommandManager.create('strafe');
 
-CommandManager.unregisterCommand(commandName);
+strafe.literal('start').executes(() => strafer.start());
 
-CommandManager.createCommandBuilder(commandName)
-    .literalArg('start')
-    .executes(JavaWrapper.methodToJava(() => strafer.start()))
-    .or()
-    .literalArg('stop')
-    .executes(JavaWrapper.methodToJava(() => strafer.stop()))
-    .or()
-    .literalArg('set')
-    .literalArg('pos')
-    .intArg('position')
+strafe.literal('stop').executes(() => strafer.stop());
+
+const set = strafe.literal('set');
+
+set.literal('pos')
+    .argument('position', 'int')
     .suggestMatching(['1', '2'])
-    .executes(
-        JavaWrapper.methodToJava((ctx: any) => {
-            const pos = ctx.getArg('position');
-            const player = Player.getPlayer();
-            if (player) strafer.setPosition(pos, player.getPos());
-        })
-    )
-    .or()
-    .or()
-    .literalArg('sneak')
-    .booleanArg('state')
-    .executes(JavaWrapper.methodToJava((ctx: any) => strafer.toggleOption('sneak', ctx.getArg('state'))))
-    .or()
-    .or()
-    .literalArg('attack')
-    .wordArg('mode')
-    .suggestMatching(['hold', 'none'])
-    .executes(JavaWrapper.methodToJava((ctx: any) => strafer.toggleOption('attackMode', ctx.getArg('mode'))))
-    .or()
-    .or()
-    .literalArg('pitch')
-    .executes(JavaWrapper.methodToJava(() => strafer.setPitch()))
-    .doubleArg('value')
-    .executes(JavaWrapper.methodToJava((ctx: any) => strafer.setPitch(ctx.getArg('value'))))
-    .or()
-    .or()
-    .literalArg('threshold')
-    .doubleArg('value')
-    .executes(JavaWrapper.methodToJava((ctx: any) => strafer.setDistanceThreshold(ctx.getArg('value'))))
-    .or()
-    .or()
-    .or()
-    .register();
+    .executes((ctx) => {
+        const pos = ctx.getArg('position');
+        if (pos !== 1 && pos !== 2) {
+            Chat.log('§cPosition must be 1 or 2');
+            return;
+        }
+        const player = Player.getPlayer();
+        if (player) strafer.setPosition(pos, player.getPos());
+    });
+
+set.literal('sneak')
+    .argument('state', 'boolean')
+    .executes((ctx) => strafer.setSneak(ctx.getArg('state')))
+    .argument('direction', 'word')
+    .suggestMatching(['both', 'left', 'right'])
+    .executes((ctx) => {
+        const dir = ctx.getArg('direction');
+        if (dir !== 'both' && dir !== 'left' && dir !== 'right') {
+            Chat.log('§cInvalid direction. Options: both, left, right');
+            return;
+        }
+        strafer.setSneak(ctx.getArg('state'), dir as Direction);
+    });
+
+const interact = set.literal('interact');
+
+interact
+    .literal('mode')
+    .argument('mode', 'word')
+    .suggestMatching(['hold', 'click', 'none'])
+    .executes((ctx) => {
+        const mode = ctx.getArg('mode');
+        if (mode !== 'hold' && mode !== 'click' && mode !== 'none') {
+            Chat.log('§cInvalid mode. Options: hold, click, none');
+            return;
+        }
+        strafer.setInteract({ mode: mode as InteractionMode });
+    })
+    .argument('direction', 'word')
+    .suggestMatching(['both', 'left', 'right'])
+    .executes((ctx) => {
+        const mode = ctx.getArg('mode');
+        const dir = ctx.getArg('direction');
+        if (mode !== 'hold' && mode !== 'click' && mode !== 'none') {
+            Chat.log('§cInvalid mode. Options: hold, click, none');
+            return;
+        }
+        if (dir !== 'both' && dir !== 'left' && dir !== 'right') {
+            Chat.log('§cInvalid direction. Options: both, left, right');
+            return;
+        }
+        strafer.setInteract({ mode: mode as InteractionMode, direction: dir as Direction });
+    });
+
+interact
+    .literal('key')
+    .argument('key', 'word')
+    .suggestMatching(['left', 'right'])
+    .executes((ctx) => {
+        const key = ctx.getArg('key');
+        if (key !== 'left' && key !== 'right') {
+            Chat.log('§cInvalid key. Options: left, right');
+            return;
+        }
+        strafer.setInteract({ key: key as InteractionKey });
+    })
+    .argument('direction', 'word')
+    .suggestMatching(['both', 'left', 'right'])
+    .executes((ctx) => {
+        const key = ctx.getArg('key');
+        const dir = ctx.getArg('direction');
+        if (key !== 'left' && key !== 'right') {
+            Chat.log('§cInvalid key. Options: left, right');
+            return;
+        }
+        if (dir !== 'both' && dir !== 'left' && dir !== 'right') {
+            Chat.log('§cInvalid direction. Options: both, left, right');
+            return;
+        }
+        strafer.setInteract({ key: key as InteractionKey, direction: dir as Direction });
+    });
+
+interact
+    .literal('cps')
+    .argument('value', 'double')
+    .executes((ctx) => {
+        const cps = ctx.getArg('value');
+        if (cps <= 0 || cps > 20) {
+            // Limit CPS to a reasonable range, e.g., 1-20
+            Chat.log('§cCPS must be between 1 and 20.');
+            return;
+        }
+        strafer.setInteract({ cps: cps });
+    })
+    .argument('direction', 'word')
+    .suggestMatching(['both', 'left', 'right'])
+    .executes((ctx) => {
+        const cps = ctx.getArg('value');
+        const dir = ctx.getArg('direction');
+        if (cps <= 0 || cps > 20) {
+            Chat.log('§cCPS must be between 1 and 20.');
+            return;
+        }
+        if (dir !== 'both' && dir !== 'left' && dir !== 'right') {
+            Chat.log('§cInvalid direction. Options: both, left, right');
+            return;
+        }
+        strafer.setInteract({ cps: cps, direction: dir as Direction });
+    });
+
+set.literal('pitch')
+    .executes(() => strafer.setPitch({ pitch: null }))
+    .argument('value', 'double')
+    .executes((ctx) => strafer.setPitch({ pitch: ctx.getArg('value') }))
+    .argument('direction', 'word')
+    .suggestMatching(['both', 'left', 'right'])
+    .executes((ctx) => {
+        const dir = ctx.getArg('direction');
+        if (dir !== 'both' && dir !== 'left' && dir !== 'right') {
+            Chat.log('§cInvalid direction. Options: both, left, right');
+            return;
+        }
+        strafer.setPitch({ pitch: ctx.getArg('value'), direction: dir as Direction });
+    });
+
+set.literal('threshold')
+    .argument('value', 'double')
+    .executes((ctx) => strafer.setDistanceThreshold(ctx.getArg('value')))
+    .argument('direction', 'word')
+    .suggestMatching(['both', 'left', 'right'])
+    .executes((ctx) => {
+        const dir = ctx.getArg('direction');
+        if (dir !== 'both' && dir !== 'left' && dir !== 'right') {
+            Chat.log('§cInvalid direction. Options: both, left, right');
+            return;
+        }
+        strafer.setDistanceThreshold(ctx.getArg('value'), dir as Direction);
+    });
+
+strafe.register();
 
 // Global Event Listeners
 JsMacros.on(
     'OpenScreen',
     JavaWrapper.methodToJava(() => {
-        // If a screen opens, we ensure keys are released immediately,
-        // as tick() will stop sending inputs due to Hud.getOpenScreen() check.
         if (strafer.isRunning) {
-            strafer['cleanupKeys'](); // Access private method for immediate cleanup
+            strafer['cleanupKeys']();
         }
     })
 );
