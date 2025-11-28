@@ -272,19 +272,44 @@ class StrafingScript {
         }
     }
 
+    private isOutOfBounds(pos: any): boolean {
+        const _1 = this.config.position['1'];
+        const _2 = this.config.position['2'];
+
+        if (isNaN(_1.x) || isNaN(_2.x)) return false;
+
+        const x = Math.floor(pos.getX());
+        const y = Math.floor(pos.getY());
+        const z = Math.floor(pos.getZ());
+
+        const minX = Math.min(_1.x, _2.x);
+        const maxX = Math.max(_1.x, _2.x);
+        const minY = Math.min(_1.y, _2.y);
+        const maxY = Math.max(_1.y, _2.y);
+        const minZ = Math.min(_1.z, _2.z);
+        const maxZ = Math.max(_1.z, _2.z);
+
+        return x < minX || x > maxX || y < minY || y > maxY || z < minZ || z > maxZ;
+    }
+
     private tick() {
         try {
-            if (!this.isRunning || Hud.getOpenScreen()) {
-                if (Hud.getOpenScreen()) {
-                    this.cleanupKeys();
-                }
-                return;
-            }
+            if (!this.isRunning) return;
 
             const player = Player.getPlayer();
             if (!player) return;
 
             const pPos = player.getPos();
+
+            if (this.isOutOfBounds(pPos)) {
+                this.stop();
+                return;
+            }
+
+            if (Hud.getOpenScreen()) {
+                this.cleanupKeys();
+                return;
+            }
 
             // --- Distance Tracking ---
             if (this.lastPos) {
@@ -395,10 +420,13 @@ class StrafingScript {
         if (interact.mode === 'click') {
             const currentCps = interact.cps ?? this.defaultConfig.options.interact[dir].cps ?? 10;
             const delayMs = 1000 / currentCps;
-            if (Date.now() - this.lastClickTime[dir] >= delayMs) {
-                key.click();
-                this.lastClickTime[dir] = Date.now();
+            if (Date.now() - this.lastClickTime[dir] >= delayMs/2) {
+                if (key.pressed) key.release();
+                else key.hold();
             }
+            // } else {
+            //     key.set(true);
+            // }
         } else if (interact.mode === 'hold') {
             key.set(true);
         } else {
