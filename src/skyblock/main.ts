@@ -49,7 +49,7 @@ class StrafingScript {
     private readonly configPath = './config/jayc331-config.json';
     private readonly scriptId = 'skyblock';
     private readonly defaultConfig: StrafingConfig = {
-        position: { '1': { x: NaN, y: NaN, z: NaN }, '2': { x: NaN, y: NaN, z: NaN } },
+        position: { '1': { x: 64, y: 100, z: 57 }, '2': { x: 0, y: 100, z: 57 } },
         options: {
             sneak: {
                 left: false,
@@ -59,21 +59,21 @@ class StrafingScript {
                 left: {
                     key: 'left',
                     mode: 'hold',
-                    cps: 4, // Default CPS
+                    cps: 10, // Default CPS
                 },
                 right: {
                     key: 'right',
                     mode: 'click',
-                    cps: 4, // Default CPS
+                    cps: 10, // Default CPS
                 },
             },
             pitch: {
-                left: -22,
-                right: -32,
+                left: -2,
+                right: -10,
             },
             threshold: {
-                left: 0.4,
-                right: 0.4,
+                left: 0.5,
+                right: 0.5,
             },
         },
     };
