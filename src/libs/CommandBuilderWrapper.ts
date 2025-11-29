@@ -316,7 +316,9 @@ export class RootNode extends CommandNode {
 
 export class CommandManager {
     static create(name: string): RootNode {
-        Chat.getCommandManager().unregisterCommand(name);
+        try {
+            Chat.getCommandManager().unregisterCommand(name);
+        } catch (e) {}
         return new RootNode(name);
     }
 }
