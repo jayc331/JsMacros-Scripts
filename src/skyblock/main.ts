@@ -1,5 +1,5 @@
 import { updateScript } from '../libs/Updater';
-updateScript(file.getAbsolutePath(), 'jayc331/JSMacros-Scripts', './config/jayc331-config.json');
+// updateScript(file.getAbsolutePath(), 'jayc331/JSMacros-Scripts', './config/jayc331-config.json');
 
 import Config from '../libs/Config';
 import { AntiAFK } from './AntiAFK';
@@ -337,17 +337,17 @@ class StrafingScript {
             return true; // Just skip inputs, don't necessarily stop unless it's long
         }
 
+        const pPos = player.getPos();
+        if (this.isOutOfBounds(pPos)) {
+            this.pause();
+            return true;
+        }
+
         if (!player.getAbilities().getFlying()) {
             // Re-init flight
             this.isStarting = true;
             this.startTickCounter = 0;
             this.cleanupKeys();
-            return true;
-        }
-
-        const pPos = player.getPos();
-        if (this.isOutOfBounds(pPos)) {
-            this.pause();
             return true;
         }
 
@@ -413,11 +413,13 @@ class StrafingScript {
 
     private checkTargetSwitch(player: any, dir: Direction) {
         const { '1': p1, '2': p2 } = this.config.position;
-        const target = this.currentTarget === 1 ? p1 : p2;
+        const rawTarget = this.currentTarget === 1 ? p1 : p2;
+        const target = { x: rawTarget.x + 0.5, z: rawTarget.z + 0.5 };
         const pPos = player.getPos();
 
         const dist = Math.sqrt(Math.pow(pPos.getX() - target.x, 2) + Math.pow(pPos.getZ() - target.z, 2));
-        const threshold = this.config.options.threshold[dir === 'left' ? 'left' : 'right'];
+        // Default threshold to 0.5 if not set or invalid
+        const threshold = this.config.options.threshold[dir === 'left' ? 'left' : 'right'] || 0.5;
 
         if (dist < threshold) {
             this.currentTarget = this.currentTarget === 1 ? 2 : 1;
