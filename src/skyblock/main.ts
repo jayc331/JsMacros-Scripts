@@ -274,14 +274,16 @@ class StrafingScript {
         const y = pos.getY();
         const z = pos.getZ();
 
+        // Strict block volume check (no extra tolerance)
+        // We extend the max by 1 to include the width of the block itself (0.0 to 1.0)
         const minX = Math.min(p1.x, p2.x);
-        const maxX = Math.max(p1.x, p2.x);
+        const maxX = Math.max(p1.x, p2.x) + 1;
         const minY = Math.min(p1.y, p2.y);
-        const maxY = Math.max(p1.y, p2.y);
+        const maxY = Math.max(p1.y, p2.y) + 1;
         const minZ = Math.min(p1.z, p2.z);
-        const maxZ = Math.max(p1.z, p2.z);
+        const maxZ = Math.max(p1.z, p2.z) + 1;
 
-        return x < minX || x > maxX || y < minY || y > maxY || z < minZ || z > maxZ;
+        return x < minX || x >= maxX || y < minY || y >= maxY || z < minZ || z >= maxZ;
     }
 
     // =========================================================================
