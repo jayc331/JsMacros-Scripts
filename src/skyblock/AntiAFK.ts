@@ -94,8 +94,7 @@ export class AntiAFK {
         if (!inv) return;
         
         // Filter for "Activity Check" GUI
-        Chat.log(inv.getContainerTitle())
-        if (!inv.getContainerTitle().includes('Activity Check')) return;
+        if (!inv.getRawContainer().getTitleText().includes('Activity Check')) return;
 
         // We assume if the GUI opens and we are enabled, we try to start the check.
         // In a real scenario, we should probably check the container name or item name.
