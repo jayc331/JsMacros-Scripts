@@ -274,13 +274,12 @@ class StrafingScript {
         const y = pos.getY();
         const z = pos.getZ();
 
-        // Add small buffer (1 block)
-        const minX = Math.min(p1.x, p2.x) - 1;
-        const maxX = Math.max(p1.x, p2.x) + 1;
-        const minY = Math.min(p1.y, p2.y) - 1;
-        const maxY = Math.max(p1.y, p2.y) + 1;
-        const minZ = Math.min(p1.z, p2.z) - 1;
-        const maxZ = Math.max(p1.z, p2.z) + 1;
+        const minX = Math.min(p1.x, p2.x);
+        const maxX = Math.max(p1.x, p2.x);
+        const minY = Math.min(p1.y, p2.y);
+        const maxY = Math.max(p1.y, p2.y);
+        const minZ = Math.min(p1.z, p2.z);
+        const maxZ = Math.max(p1.z, p2.z);
 
         return x < minX || x > maxX || y < minY || y > maxY || z < minZ || z > maxZ;
     }
