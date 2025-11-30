@@ -36,8 +36,17 @@ export class AntiAFK {
 
     private registerListeners() {
         JsMacros.on('OpenScreen', JavaWrapper.methodToJava((event) => this.onOpenScreen(event)));
-        JsMacros.on('Title', JavaWrapper.methodToJava((event) => this.onTitle(event)));
-        JsMacros.on('Tick', JavaWrapper.methodToJava(() => this.onTick()));
+        JsMacros.on('Tick', JavaWrapper.methodToJava((event) => this.onTick(event)));
+        this.listenForTitle();
+    }
+
+    private listenForTitle() {
+        JsMacros.once('Title', JavaWrapper.methodToJava((event) => {
+            new (Packages.java.lang.Thread as any)(() => {
+                this.onTitle(event);
+                this.listenForTitle();
+            }).start();
+        }));
     }
     
     private setActive(active: boolean) {
@@ -51,10 +60,10 @@ export class AntiAFK {
         }
     }
 
-    private onTick() {
+    private onTick(event: Events.Tick) {
         if (!this.isActive) return;
-        // 5 seconds timeout
-        if (Date.now() - this.lastTitleTime > 5000) {
+        // 10 seconds timeout
+        if (Date.now() - this.lastTitleTime > 10000) {
             this.setActive(false);
         }
     }
@@ -85,6 +94,7 @@ export class AntiAFK {
         if (!inv) return;
         
         // Filter for "Activity Check" GUI
+        Chat.log(inv.getContainerTitle())
         if (!inv.getContainerTitle().includes('Activity Check')) return;
 
         // We assume if the GUI opens and we are enabled, we try to start the check.
@@ -106,9 +116,6 @@ export class AntiAFK {
 
     private onTitle(event: Events.Title) {
         if (!this.config.enabled) return;
-        // If we haven't clicked start recently, maybe we shouldn't auto-react?
-        // But the prompt implies "a series of titles appear... macro should follow".
-        // So even if we didn't trigger the start (maybe user did), we should help if enabled.
         
         if (!event.message) return;
         const text = event.message.getString().trim();
@@ -126,31 +133,44 @@ export class AntiAFK {
         const player = Player.getPlayer();
         if (!player) return;
 
+        let matched = false;
+
         if (lowerText.includes('look left')) {
             Chat.log('§aAntiAFK: §7Looking LEFT');
             const yaw = player.getYaw();
             player.lookAt(yaw - 90, player.getPitch());
+            matched = true;
         } else if (lowerText.includes('look right')) {
              Chat.log('§aAntiAFK: §7Looking RIGHT');
             const yaw = player.getYaw();
             player.lookAt(yaw + 90, player.getPitch());
+            matched = true;
         } else if (lowerText.includes('look down')) {
              Chat.log('§aAntiAFK: §7Looking DOWN');
             player.lookAt(player.getYaw(), 90);
+            matched = true;
         } else if (lowerText.includes('look up')) {
              Chat.log('§aAntiAFK: §7Looking UP');
             player.lookAt(player.getYaw(), -90);
+            matched = true;
         } else if (lowerText.includes('jump')) {
              Chat.log('§aAntiAFK: §7Jumping');
             this.keys.jump.click();
+            matched = true;
         } else if (lowerText.includes('sneak')) {
              Chat.log('§aAntiAFK: §7Sneaking');
             this.keys.sneak.set(true);
             Client.waitTick(10);
             this.keys.sneak.set(false);
+            matched = true;
         } else if (lowerText.includes('punch') || lowerText.includes('attack')) {
              Chat.log('§aAntiAFK: §7Punching');
             this.keys.attack.click();
+            matched = true;
+        }
+
+        if (matched) {
+            Client.waitTick(10);
         }
     }
 
