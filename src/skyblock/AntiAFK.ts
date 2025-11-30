@@ -27,10 +27,10 @@ export class AntiAFK {
 
     private onActivityChange?: (active: boolean) => void;
 
-    // Queue system
-    private actionQueue: string[] = [];
-    private isProcessingQueue = false;
-    private processingThread: any = null; // Java Thread
+    // State management for tick-based logic
+    private processingActionUntil = 0;
+    private unsneakAt = 0;
+    private checkScreenAt = 0;
 
     constructor(onActivityChange?: (active: boolean) => void) {
         this.onActivityChange = onActivityChange;
@@ -56,17 +56,20 @@ export class AntiAFK {
 
     private onTitleEvent(event: any) {
         if (!this.config.enabled) return;
-        // event.message is an IChatComponent, check docs if getString() is correct.
-        // Usually getString() or getUnformattedText() work.
+
+        // If we are already busy processing a command (waiting for delay), ignore spam
+        if (this.processingActionUntil > Date.now()) return;
+
         const text = event.message ? event.message.getString() : '';
         if (!text) return;
 
         const lowerText = text.toLowerCase();
-        // If we are already active, we process everything. If not, we only process triggers.
+
+        // If we are NOT active, we only listen for triggers.
+        // If we ARE active, we listen for everything (but only one at a time due to flag).
         if (!this.isActive && !this.isRelevantTitle(lowerText)) return;
 
-        this.actionQueue.push(text);
-        this.processQueue();
+        this.processAction(text);
     }
 
     private isRelevantTitle(lowerText: string): boolean {
@@ -79,93 +82,8 @@ export class AntiAFK {
         );
     }
 
-    private processQueue() {
-        if (this.isProcessingQueue) return;
-        if (this.actionQueue.length === 0) return;
-
-        this.isProcessingQueue = true;
-
-        this.processingThread = new (Packages.java.lang.Thread as any)(() => {
-            try {
-                while (this.actionQueue.length > 0) {
-                    const text = this.actionQueue.shift();
-                    if (text) this.onTitle(text);
-                    // Small delay between actions to prevent overlapping inputs
-                    Client.waitTick(2);
-                }
-            } catch (e) {
-                Chat.log('§cAntiAFK Thread Error: ' + e);
-            } finally {
-                this.isProcessingQueue = false;
-                this.processingThread = null;
-            }
-        });
-        this.processingThread.start();
-    }
-
-    private setActive(active: boolean) {
-        if (this.isActive === active) return;
-        this.isActive = active;
-        if (this.onActivityChange) {
-            this.onActivityChange(active);
-        }
-        if (!active) {
-            Chat.log('§aAntiAFK: §7Check finished/timed out.');
-        }
-    }
-
-    private onTick(event: Events.Tick) {
-        if (!this.isActive) return;
-        // 10 seconds timeout
-        if (Date.now() - this.lastTitleTime > 10000) {
-            this.setActive(false);
-            this.actionQueue = []; // Clear queue on timeout
-        }
-    }
-
-    private saveConfig() {
-        Config.writeConfig(this.configPath, this.config, this.scriptId);
-    }
-
-    private onOpenScreen(event: Events.OpenScreen) {
-        if (!this.config.enabled) return;
-
-        // Run logic in a thread because we use waitTick/sleep
-        new (Packages.java.lang.Thread as any)(() => {
-            try {
-                this.handleOpenScreenLogic(event);
-            } catch (e) {
-                Chat.log('§cAntiAFK Screen Error: ' + e);
-            }
-        }).start();
-    }
-
-    private handleOpenScreenLogic(event: Events.OpenScreen) {
-        // Wait a bit for GUI to populate
-        Client.waitTick(5);
-
-        if (!Hud.getOpenScreen()) return;
-        if (!Player.getPlayer()) return;
-
-        const inv = Player.openInventory();
-        if (!inv) return;
-
-        const title = inv.getRawContainer().getTitleText();
-        if (!title || !title.toString().includes('Activity Check')) return;
-
-        try {
-            inv.click(this.config.triggerSlot);
-            this.lastTitleTime = Date.now();
-            this.setActive(true);
-            Chat.log('§aAntiAFK: §7Clicking start slot...');
-        } catch (e) {
-            Chat.log('§cAntiAFK Error clicking slot: ' + e);
-        }
-    }
-
-    private onTitle(text: string) {
-        const textStr = text.trim();
-        const lowerText = textStr.toLowerCase();
+    private processAction(text: string) {
+        const lowerText = text.toLowerCase();
 
         // Update activity timestamp
         this.lastTitleTime = Date.now();
@@ -175,6 +93,7 @@ export class AntiAFK {
         if (!player) return;
 
         let matched = false;
+        let actionDuration = 500; // Default 500ms delay (10 ticks)
 
         if (lowerText.includes('look left')) {
             Chat.log('§aAntiAFK: §7Looking LEFT');
@@ -201,8 +120,7 @@ export class AntiAFK {
         } else if (lowerText.includes('sneak')) {
             Chat.log('§aAntiAFK: §7Sneaking');
             this.keys.sneak.set(true);
-            Client.waitTick(10);
-            this.keys.sneak.set(false);
+            this.unsneakAt = Date.now() + 500; // Schedule unsneak
             matched = true;
         } else if (lowerText.includes('punch') || lowerText.includes('attack')) {
             Chat.log('§aAntiAFK: §7Punching');
@@ -211,7 +129,70 @@ export class AntiAFK {
         }
 
         if (matched) {
-            Client.waitTick(10);
+            this.processingActionUntil = Date.now() + actionDuration;
+        }
+    }
+
+    private setActive(active: boolean) {
+        if (this.isActive === active) return;
+        this.isActive = active;
+        if (this.onActivityChange) {
+            this.onActivityChange(active);
+        }
+        if (!active) {
+            Chat.log('§aAntiAFK: §7Check finished/timed out.');
+        }
+    }
+
+    private onTick(event: Events.Tick) {
+        if (this.isActive) {
+            // 10 seconds timeout
+            if (Date.now() - this.lastTitleTime > 10000) {
+                this.setActive(false);
+                this.processingActionUntil = 0;
+            }
+        }
+
+        // Handle Delayed Unsneak
+        if (this.unsneakAt > 0 && Date.now() > this.unsneakAt) {
+            this.keys.sneak.set(false);
+            this.unsneakAt = 0;
+        }
+
+        // Handle Delayed Screen Check
+        if (this.checkScreenAt > 0 && Date.now() > this.checkScreenAt) {
+            this.handleOpenScreenLogic();
+            this.checkScreenAt = 0;
+        }
+    }
+
+    private saveConfig() {
+        Config.writeConfig(this.configPath, this.config, this.scriptId);
+    }
+
+    private onOpenScreen(event: Events.OpenScreen) {
+        if (!this.config.enabled) return;
+        // Schedule check for 250ms (5 ticks) later
+        this.checkScreenAt = Date.now() + 250;
+    }
+
+    private handleOpenScreenLogic() {
+        if (!Hud.getOpenScreen()) return;
+        if (!Player.getPlayer()) return;
+
+        const inv = Player.openInventory();
+        if (!inv) return;
+
+        const title = inv.getRawContainer().getTitleText();
+        if (!title || !title.toString().includes('Activity Check')) return;
+
+        try {
+            inv.click(this.config.triggerSlot);
+            this.lastTitleTime = Date.now();
+            this.setActive(true);
+            Chat.log('§aAntiAFK: §7Clicking start slot...');
+        } catch (e) {
+            Chat.log('§cAntiAFK Error clicking slot: ' + e);
         }
     }
 
