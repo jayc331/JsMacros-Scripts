@@ -71,7 +71,8 @@ class StrafingScript {
     // State
     private currentTarget: 1 | 2 = 2;
     public isRunning = false;
-    public isPaused = false;
+    public captchaProceed = true;
+
     private isStarting = false;
     private startTickCounter = 0;
 
@@ -183,19 +184,6 @@ class StrafingScript {
     // Control Logic
     // =========================================================================
 
-    public pause() {
-        if (!this.isRunning || this.isPaused) return;
-        this.isPaused = true;
-        this.cleanupKeys();
-        this.showStatus('§eStrafing paused (Out of Bounds/AFK Check).');
-    }
-
-    public resume() {
-        if (!this.isRunning || !this.isPaused) return;
-        this.isPaused = false;
-        this.showStatus('§aStrafing resumed.');
-    }
-
     public stop() {
         if (!this.isRunning) return;
         this.isRunning = false;
@@ -222,7 +210,7 @@ class StrafingScript {
         }
 
         this.isRunning = true;
-        this.isPaused = false;
+        this.captchaProceed = true;
         this.isStarting = true;
         this.startTickCounter = 0;
         this.currentTarget = 2;
@@ -266,7 +254,11 @@ class StrafingScript {
         this.keys.jump.release();
     }
 
-    private isOutOfBounds(pos: any): boolean {
+    public get outOfBounds(): boolean {
+        const player = Player.getPlayer();
+        if (!player) return false;
+        const pos = player.getPos();
+
         const { '1': p1, '2': p2 } = this.config.position;
         if (isNaN(p1.x) || isNaN(p2.x)) return false;
 
@@ -296,17 +288,35 @@ class StrafingScript {
             const player = Player.getPlayer();
             if (!player) return;
 
-            if (this.isPaused) {
-                this.checkResume(player);
+            // 1. External Pause (AntiAFK)
+            if (!this.captchaProceed) {
+                this.cleanupKeys();
+                this.showStatus('§eStrafing paused (AntiAFK).', 100);
                 return;
+            }
+
+            // 2. Bounds Check
+            if (this.outOfBounds) {
+                this.cleanupKeys();
+                this.showStatus('§eStrafing paused (Out of Bounds).', 100);
+                return;
+            }
+            
+            // 3. Screen Check (Inventory Open)
+            if (Hud.getOpenScreen()) {
+                 this.cleanupKeys();
+                 return;
+            }
+
+            // 4. Flight Recovery
+            if (!player.getAbilities().getFlying()) {
+                this.isStarting = true;
+                this.startTickCounter = 0;
+                this.cleanupKeys();
             }
 
             if (this.isStarting) {
                 this.handleStartup(player);
-                return;
-            }
-
-            if (this.shouldPauseOrStop(player)) {
                 return;
             }
 
@@ -322,36 +332,6 @@ class StrafingScript {
             Chat.log('§cError in strafe tick: ' + e);
             this.stop();
         }
-    }
-
-    private checkResume(player: any) {
-        const pPos = player.getPos();
-        if (!this.isOutOfBounds(pPos)) {
-            this.resume();
-        }
-    }
-
-    private shouldPauseOrStop(player: any): boolean {
-        if (Hud.getOpenScreen()) {
-            this.cleanupKeys();
-            return true; // Just skip inputs, don't necessarily stop unless it's long
-        }
-
-        const pPos = player.getPos();
-        if (this.isOutOfBounds(pPos)) {
-            this.pause();
-            return true;
-        }
-
-        if (!player.getAbilities().getFlying()) {
-            // Re-init flight
-            this.isStarting = true;
-            this.startTickCounter = 0;
-            this.cleanupKeys();
-            return true;
-        }
-
-        return false;
     }
 
     private handleStartup(player: any) {
@@ -494,8 +474,7 @@ class StrafingScript {
 
 const strafer = new StrafingScript();
 const antiAFK = new AntiAFK((active) => {
-    if (active) strafer.pause();
-    else strafer.resume();
+    strafer.captchaProceed = !active;
 });
 
 (event as any).stopListener = JavaWrapper.methodToJava(() => strafer.stop());
