@@ -12,7 +12,7 @@ export class AntiAFK {
     private readonly scriptId = 'antiafk';
     private readonly defaultConfig: AntiAFKConfig = {
         enabled: true,
-        triggerSlot: 15,
+        triggerSlot: 13,
     };
 
     private config: AntiAFKConfig;
@@ -147,7 +147,7 @@ export class AntiAFK {
     private onTick(event: Events.Tick) {
         if (this.isActive) {
             // 10 seconds timeout
-            if (Date.now() - this.lastTitleTime > 10000) {
+            if (Date.now() - this.lastTitleTime > 5_000) {
                 this.setActive(false);
                 this.processingActionUntil = 0;
             }
