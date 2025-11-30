@@ -2,6 +2,7 @@ import { updateScript } from '../libs/Updater';
 updateScript(file.getAbsolutePath(), 'jayc331/JSMacros-Scripts', './config/jayc331-config.json');
 
 import Config from '../libs/Config';
+import { AntiAFK } from './AntiAFK';
 import { BaritoneAPI, BetterBlockPos } from '../libs/BaritoneAPIProvider';
 import { Key } from '../libs/KeyManager';
 import { CommandManager } from '../libs/CommandBuilderWrapper';
@@ -87,6 +88,8 @@ class StrafingScript {
     private statusMessage = '';
     private statusExpiry = 0;
     public isRunning = false; // Only flag needed for running/stopped state
+    private isStarting = false;
+    private startTickCounter = 0;
     private lastClickTime: { left: number; right: number } = { left: 0, right: 0 };
     // Key definitions
     private readonly keys = {
@@ -95,7 +98,10 @@ class StrafingScript {
         mouseLeft: new Key('key.mouse.left'),
         mouseRight: new Key('key.mouse.right'),
         sneak: new Key('key.keyboard.left.shift'),
+        jump: new Key('key.keyboard.space'),
     };
+    
+    public isPaused = false;
 
     constructor() {
         this.config = Config.readConfig(this.configPath, this.defaultConfig, this.scriptId);
@@ -109,6 +115,22 @@ class StrafingScript {
         this.statusMessage = msg;
         this.statusExpiry = Date.now() + duration;
         Chat.actionbar(msg); // Show immediately
+    }
+    
+    public pause() {
+        if (!this.isRunning || this.isPaused) return;
+        this.isPaused = true;
+        // Keep tick listener active, but clean up keys so player can move freely
+        this.cleanupKeys();
+        this.showStatus('§eStrafing paused (Out of Bounds).');
+    }
+
+    public resume() {
+        if (!this.isRunning || !this.isPaused) return; // Must be running and paused to resume
+        this.isPaused = false;
+        // Tick listener is already active, no need to re-attach.
+        // Input handling will resume automatically in tick().
+        this.showStatus('§aStrafing resumed.');
     }
 
     public setPosition(index: 1 | 2, pos: any) {
@@ -229,7 +251,9 @@ class StrafingScript {
             return;
         }
 
-        this.isRunning = true; // Set running state immediately
+        this.isRunning = true;
+        this.isStarting = true;
+        this.startTickCounter = 0;
 
         // Visuals
         try {
@@ -254,7 +278,7 @@ class StrafingScript {
             );
         }
 
-        this.showStatus('§aStrafing started!');
+        this.showStatus('§aStrafing initializing...');
     }
 
     private updateVisuals() {
@@ -292,17 +316,74 @@ class StrafingScript {
         return x < minX || x > maxX || y < minY || y > maxY || z < minZ || z > maxZ;
     }
 
+    private handleStartup() {
+        const player = Player.getPlayer();
+        if (!player) return;
+
+        if (this.startTickCounter === 0) {
+            if (player.getAbilities().getFlying()) {
+                this.isStarting = false;
+                this.showStatus('§aStrafing started!');
+                return;
+            }
+            Chat.log('§7Enabling flight...');
+        }
+
+        const tick = this.startTickCounter;
+        this.startTickCounter++;
+
+        if (tick === 0) this.keys.jump.set(true);
+        if (tick === 2) this.keys.jump.set(false);
+        if (tick === 4) this.keys.jump.set(true);
+        if (tick === 25) this.keys.jump.set(false);
+
+        if (tick > 25) {
+            if (player.getAbilities().getFlying()) {
+                this.isStarting = false;
+                this.showStatus('§aStrafing started!');
+            } else if (tick > 60) {
+                // Timeout - Retry
+                this.startTickCounter = 0;
+            }
+        }
+    }
+
     private tick() {
         try {
             if (!this.isRunning) return;
+
+            // If paused, only check for re-entry, otherwise skip main logic
+            if (this.isPaused) {
+                const player = Player.getPlayer();
+                if (!player) return;
+                const pPos = player.getPos();
+                if (!this.isOutOfBounds(pPos)) { // Re-entered bounds
+                    this.resume();
+                }
+                return; // Skip rest of tick logic while paused
+            }
+
+            if (this.isStarting) {
+                this.handleStartup();
+                return;
+            }
 
             const player = Player.getPlayer();
             if (!player) return;
 
             const pPos = player.getPos();
 
+            // Change this from stop() to pause()
             if (this.isOutOfBounds(pPos)) {
-                this.stop();
+                this.pause(); // Now pauses, doesn't stop
+                return;
+            }
+
+            // Auto-re-enable flight if lost
+            if (!player.getAbilities().getFlying()) {
+                this.isStarting = true;
+                this.startTickCounter = 0;
+                this.cleanupKeys();
                 return;
             }
 
@@ -440,6 +521,10 @@ class StrafingScript {
 // =============================================================================
 
 const strafer = new StrafingScript();
+const antiAFK = new AntiAFK((active) => {
+    if (active) strafer.pause();
+    else strafer.resume();
+});
 
 // Export cleanup for JsMacros
 (event as any).stopListener = JavaWrapper.methodToJava(() => strafer.stop());
