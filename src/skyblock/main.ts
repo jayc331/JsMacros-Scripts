@@ -32,14 +32,16 @@ interface InteractionConfig {
     cps?: number;
 }
 
+interface StrafingOptions {
+    sneak: DirectionConfig<boolean>;
+    interact: DirectionConfig<InteractionConfig>;
+    pitch: DirectionConfig<number | null>;
+    threshold: DirectionConfig<number>;
+}
+
 interface StrafingConfig {
     position: { '1': Position; '2': Position };
-    options: {
-        sneak: DirectionConfig<boolean>;
-        interact: DirectionConfig<InteractionConfig>;
-        pitch: DirectionConfig<number | null>;
-        threshold: DirectionConfig<number>;
-    };
+    options: StrafingOptions;
 }
 
 // =============================================================================
@@ -49,48 +51,40 @@ interface StrafingConfig {
 class StrafingScript {
     private readonly configPath = './config/jayc331-config.json';
     private readonly scriptId = 'skyblock';
+
     private readonly defaultConfig: StrafingConfig = {
         position: { '1': { x: 64, y: 100, z: 57 }, '2': { x: 0, y: 100, z: 57 } },
         options: {
-            sneak: {
-                left: false,
-                right: false,
-            },
+            sneak: { left: false, right: false },
             interact: {
-                left: {
-                    key: 'left',
-                    mode: 'hold',
-                    cps: 10, // Default CPS
-                },
-                right: {
-                    key: 'right',
-                    mode: 'click',
-                    cps: 10, // Default CPS
-                },
+                left: { key: 'left', mode: 'hold', cps: 10 },
+                right: { key: 'right', mode: 'click', cps: 10 },
             },
-            pitch: {
-                left: -2,
-                right: -10,
-            },
-            threshold: {
-                left: 0.5,
-                right: 0.5,
-            },
+            pitch: { left: -2, right: -10 },
+            threshold: { left: 0.5, right: 0.5 },
         },
     };
 
     private config: StrafingConfig;
     private tickListener: any = null;
+
+    // State
     private currentTarget: 1 | 2 = 2;
+    public isRunning = false;
+    public isPaused = false;
+    private isStarting = false;
+    private startTickCounter = 0;
+
+    // Statistics
     private startTime = 0;
     private totalDistance = 0;
     private lastPos: Position | null = null;
+
+    // UI/Timing
     private statusMessage = '';
     private statusExpiry = 0;
-    public isRunning = false; // Only flag needed for running/stopped state
-    private isStarting = false;
-    private startTickCounter = 0;
     private lastClickTime: { left: number; right: number } = { left: 0, right: 0 };
+
     // Key definitions
     private readonly keys = {
         left: new Key('key.keyboard.a'),
@@ -100,8 +94,6 @@ class StrafingScript {
         sneak: new Key('key.keyboard.left.shift'),
         jump: new Key('key.keyboard.space'),
     };
-    
-    public isPaused = false;
 
     constructor() {
         this.config = Config.readConfig(this.configPath, this.defaultConfig, this.scriptId);
@@ -114,24 +106,12 @@ class StrafingScript {
     private showStatus(msg: string, duration = 2000) {
         this.statusMessage = msg;
         this.statusExpiry = Date.now() + duration;
-        Chat.actionbar(msg); // Show immediately
-    }
-    
-    public pause() {
-        if (!this.isRunning || this.isPaused) return;
-        this.isPaused = true;
-        // Keep tick listener active, but clean up keys so player can move freely
-        this.cleanupKeys();
-        this.showStatus('§eStrafing paused (Out of Bounds).');
+        Chat.actionbar(msg);
     }
 
-    public resume() {
-        if (!this.isRunning || !this.isPaused) return; // Must be running and paused to resume
-        this.isPaused = false;
-        // Tick listener is already active, no need to re-attach.
-        // Input handling will resume automatically in tick().
-        this.showStatus('§aStrafing resumed.');
-    }
+    // =========================================================================
+    // Config Setters
+    // =========================================================================
 
     public setPosition(index: 1 | 2, pos: any) {
         const coords = { x: Math.floor(pos.getX()), y: Math.floor(pos.getY()), z: Math.floor(pos.getZ()) };
@@ -141,15 +121,39 @@ class StrafingScript {
         this.updateVisuals();
     }
 
-    public setSneak(state: boolean, direction: Direction = 'both') {
+    /**
+     * Updates a directional configuration option safely.
+     */
+    private updateOption<K extends keyof StrafingOptions>(
+        key: K,
+        direction: Direction,
+        updater: (current: StrafingOptions[K]['left']) => StrafingOptions[K]['left']
+    ) {
+        const option = this.config.options[key];
         if (direction === 'both' || direction === 'left') {
-            this.config.options.sneak.left = state;
+            // Type assertion needed as TS cannot infer specific types from K
+            (option as any).left = updater((option as any).left);
         }
         if (direction === 'both' || direction === 'right') {
-            this.config.options.sneak.right = state;
+            (option as any).right = updater((option as any).right);
         }
         this.saveConfig();
+    }
+
+    public setSneak(state: boolean, direction: Direction = 'both') {
+        this.updateOption('sneak', direction, () => state);
         this.showStatus(`§7Sneak set to §a${state}§7 for §e${direction}`);
+    }
+
+    public setPitch({ pitch, direction = 'both' }: { pitch: number | null; direction?: Direction }) {
+        this.updateOption('pitch', direction, () => pitch);
+        const valStr = pitch === null ? 'disabled' : pitch.toFixed(1);
+        this.showStatus(`§7Pitch set to §a${valStr}§7 for §e${direction}`);
+    }
+
+    public setDistanceThreshold(dist: number, direction: Direction = 'both') {
+        this.updateOption('threshold', direction, () => dist);
+        this.showStatus(`§7Threshold set to §a${dist.toFixed(2)}m§7 for §e${direction}`);
     }
 
     public setInteract({
@@ -163,75 +167,43 @@ class StrafingScript {
         cps?: number;
         direction?: Direction;
     }) {
-        if (direction === 'both' || direction === 'left') {
-            const leftConfig = { ...this.config.options.interact.left };
-            if (mode !== undefined) leftConfig.mode = mode;
-            if (key !== undefined) leftConfig.key = key;
-            if (cps !== undefined) leftConfig.cps = cps;
-            this.config.options.interact.left = leftConfig;
-        }
-        if (direction === 'both' || direction === 'right') {
-            const rightConfig = { ...this.config.options.interact.right };
-            if (mode !== undefined) rightConfig.mode = mode;
-            if (key !== undefined) rightConfig.key = key;
-            if (cps !== undefined) rightConfig.cps = cps;
-            this.config.options.interact.right = rightConfig;
-        }
-        this.saveConfig();
-        // For status message, show what was actually set (or current value if not set)
-        const finalMode =
-            mode ??
-            (direction === 'right' ? this.config.options.interact.right.mode : this.config.options.interact.left.mode);
-        const finalKey =
-            key ??
-            (direction === 'right' ? this.config.options.interact.right.key : this.config.options.interact.left.key);
-        const finalCps =
-            cps ??
-            (direction === 'right' ? this.config.options.interact.right.cps : this.config.options.interact.left.cps);
-        this.showStatus(`§7Interact set to §a${finalMode}§7 (${finalKey}, ${finalCps} CPS) for §e${direction}`);
+        this.updateOption('interact', direction, (current) => ({
+            ...current,
+            ...(mode !== undefined ? { mode } : {}),
+            ...(key !== undefined ? { key } : {}),
+            ...(cps !== undefined ? { cps } : {}),
+        }));
+
+        // Construct status message
+        const ref = direction === 'right' ? this.config.options.interact.right : this.config.options.interact.left;
+        this.showStatus(`§7Interact set to §a${ref.mode}§7 (${ref.key}, ${ref.cps} CPS) for §e${direction}`);
     }
 
-    public setPitch({ pitch, direction = 'both' }: { pitch: number | null; direction?: Direction }) {
-        if (direction === 'both' || direction === 'left') {
-            this.config.options.pitch.left = pitch;
-        }
-        if (direction === 'both' || direction === 'right') {
-            this.config.options.pitch.right = pitch;
-        }
-        this.saveConfig();
-        const valStr = pitch === null ? 'disabled' : pitch.toFixed(1);
-        this.showStatus(`§7Pitch set to §a${valStr}§7 for §e${direction}`);
+    // =========================================================================
+    // Control Logic
+    // =========================================================================
+
+    public pause() {
+        if (!this.isRunning || this.isPaused) return;
+        this.isPaused = true;
+        this.cleanupKeys();
+        this.showStatus('§eStrafing paused (Out of Bounds/AFK Check).');
     }
 
-    public setDistanceThreshold(dist: number, direction: Direction = 'both') {
-        if (direction === 'both' || direction === 'left') {
-            this.config.options.threshold.left = dist;
-        }
-        if (direction === 'both' || direction === 'right') {
-            this.config.options.threshold.right = dist;
-        }
-        this.saveConfig();
-        this.showStatus(`§7Threshold set to §a${dist.toFixed(2)}m§7 for §e${direction}`);
-    }
-
-    private cleanupKeys() {
-        this.keys.left.release();
-        this.keys.right.release();
-        this.keys.mouseLeft.release();
-        this.keys.mouseRight.release();
-        this.keys.sneak.release();
+    public resume() {
+        if (!this.isRunning || !this.isPaused) return;
+        this.isPaused = false;
+        this.showStatus('§aStrafing resumed.');
     }
 
     public stop() {
-        if (!this.isRunning) return; // Already stopped
+        if (!this.isRunning) return;
         this.isRunning = false;
-
+        this.cleanupKeys();
         if (this.tickListener) {
             JsMacros.off(this.tickListener);
             this.tickListener = null;
         }
-
-        this.cleanupKeys();
         this.startTime = 0;
         this.totalDistance = 0;
         this.showStatus('§cStrafing stopped.');
@@ -243,83 +215,146 @@ class StrafingScript {
             return;
         }
 
-        const _1 = this.config.position['1'];
-        const _2 = this.config.position['2'];
-
-        if (isNaN(_1.x) || isNaN(_1.y) || isNaN(_1.z) || isNaN(_2.x) || isNaN(_2.y) || isNaN(_2.z)) {
+        const { '1': p1, '2': p2 } = this.config.position;
+        if (isNaN(p1.x) || isNaN(p2.x)) {
             Chat.log('§cPositions not set! Use /strafe set pos 1 and /strafe set pos 2');
             return;
         }
 
         this.isRunning = true;
+        this.isPaused = false;
         this.isStarting = true;
         this.startTickCounter = 0;
-
-        // Visuals
-        try {
-            const pos1 = new (BetterBlockPos as any)(_1.x, _1.y, _1.z);
-            const pos2 = new (BetterBlockPos as any)(_2.x, _2.y, _2.z);
-            BaritoneAPI.getProvider().getPrimaryBaritone().getSelectionManager().addSelection(pos1, pos2);
-        } catch (e) {
-            // Ignore errors
-        }
-
-        // Reset stats
         this.currentTarget = 2;
         this.startTime = Date.now();
         this.totalDistance = 0;
         this.lastPos = null;
 
-        // Only attach listener if not already attached
+        this.updateVisuals();
+
         if (!this.tickListener) {
             this.tickListener = JsMacros.on(
                 'Tick',
                 JavaWrapper.methodToJava(() => this.tick())
             );
         }
-
         this.showStatus('§aStrafing initializing...');
     }
 
     private updateVisuals() {
         try {
             const primary = BaritoneAPI.getProvider().getPrimaryBaritone();
-            const _1 = this.config.position['1'];
-            const _2 = this.config.position['2'];
-            if (!isNaN(_1.x) && !isNaN(_1.y) && !isNaN(_1.z) && !isNaN(_2.x) && !isNaN(_2.y) && !isNaN(_2.z)) {
-                const pos1 = new (BetterBlockPos as any)(_1.x, _1.y, _1.z);
-                const pos2 = new (BetterBlockPos as any)(_2.x, _2.y, _2.z);
-                primary.getSelectionManager().addSelection(pos1, pos2);
+            const { '1': p1, '2': p2 } = this.config.position;
+
+            if (!isNaN(p1.x) && !isNaN(p2.x)) {
+                // BetterBlockPos constructor expects ints
+                const bp1 = new (BetterBlockPos as any)(Math.floor(p1.x), Math.floor(p1.y), Math.floor(p1.z));
+                const bp2 = new (BetterBlockPos as any)(Math.floor(p2.x), Math.floor(p2.y), Math.floor(p2.z));
+                primary.getSelectionManager().addSelection(bp1, bp2);
             }
         } catch (e) {
-            // Ignore
+            Chat.log(`§cVisuals Error: ${e}`);
         }
     }
 
+    private cleanupKeys() {
+        this.keys.left.release();
+        this.keys.right.release();
+        this.keys.mouseLeft.release();
+        this.keys.mouseRight.release();
+        this.keys.sneak.release();
+        this.keys.jump.release();
+    }
+
     private isOutOfBounds(pos: any): boolean {
-        const _1 = this.config.position['1'];
-        const _2 = this.config.position['2'];
+        const { '1': p1, '2': p2 } = this.config.position;
+        if (isNaN(p1.x) || isNaN(p2.x)) return false;
 
-        if (isNaN(_1.x) || isNaN(_2.x)) return false;
+        const x = pos.getX();
+        const y = pos.getY();
+        const z = pos.getZ();
 
-        const x = Math.floor(pos.getX());
-        const y = Math.floor(pos.getY());
-        const z = Math.floor(pos.getZ());
-
-        const minX = Math.min(_1.x, _2.x);
-        const maxX = Math.max(_1.x, _2.x);
-        const minY = Math.min(_1.y, _2.y);
-        const maxY = Math.max(_1.y, _2.y);
-        const minZ = Math.min(_1.z, _2.z);
-        const maxZ = Math.max(_1.z, _2.z);
+        // Add small buffer (1 block)
+        const minX = Math.min(p1.x, p2.x) - 1;
+        const maxX = Math.max(p1.x, p2.x) + 1;
+        const minY = Math.min(p1.y, p2.y) - 1;
+        const maxY = Math.max(p1.y, p2.y) + 1;
+        const minZ = Math.min(p1.z, p2.z) - 1;
+        const maxZ = Math.max(p1.z, p2.z) + 1;
 
         return x < minX || x > maxX || y < minY || y > maxY || z < minZ || z > maxZ;
     }
 
-    private handleStartup() {
-        const player = Player.getPlayer();
-        if (!player) return;
+    // =========================================================================
+    // Tick Loop & Sub-routines
+    // =========================================================================
 
+    private tick() {
+        try {
+            if (!this.isRunning) return;
+
+            const player = Player.getPlayer();
+            if (!player) return;
+
+            if (this.isPaused) {
+                this.checkResume(player);
+                return;
+            }
+
+            if (this.isStarting) {
+                this.handleStartup(player);
+                return;
+            }
+
+            if (this.shouldPauseOrStop(player)) {
+                return;
+            }
+
+            this.trackDistance(player);
+
+            const currentDirection: Direction = this.currentTarget === 2 ? 'right' : 'left';
+
+            this.updateRotation(player, currentDirection);
+            this.checkTargetSwitch(player, currentDirection);
+            this.updateHud(currentDirection);
+            this.handleInputs(currentDirection);
+        } catch (e) {
+            Chat.log('§cError in strafe tick: ' + e);
+            this.stop();
+        }
+    }
+
+    private checkResume(player: any) {
+        const pPos = player.getPos();
+        if (!this.isOutOfBounds(pPos)) {
+            this.resume();
+        }
+    }
+
+    private shouldPauseOrStop(player: any): boolean {
+        if (Hud.getOpenScreen()) {
+            this.cleanupKeys();
+            return true; // Just skip inputs, don't necessarily stop unless it's long
+        }
+
+        if (!player.getAbilities().getFlying()) {
+            // Re-init flight
+            this.isStarting = true;
+            this.startTickCounter = 0;
+            this.cleanupKeys();
+            return true;
+        }
+
+        const pPos = player.getPos();
+        if (this.isOutOfBounds(pPos)) {
+            this.pause();
+            return true;
+        }
+
+        return false;
+    }
+
+    private handleStartup(player: any) {
         if (this.startTickCounter === 0) {
             if (player.getAbilities().getFlying()) {
                 this.isStarting = false;
@@ -329,128 +364,67 @@ class StrafingScript {
             Chat.log('§7Enabling flight...');
         }
 
-        const tick = this.startTickCounter;
-        this.startTickCounter++;
+        const tick = this.startTickCounter++;
 
-        if (tick === 0) this.keys.jump.set(true);
-        if (tick === 2) this.keys.jump.set(false);
-        if (tick === 4) this.keys.jump.set(true);
-        if (tick === 25) this.keys.jump.set(false);
+        // Flight activation sequence (Jump spam)
+        if (tick === 0 || tick === 4) this.keys.jump.set(true);
+        if (tick === 2 || tick === 25) this.keys.jump.set(false);
 
         if (tick > 25) {
             if (player.getAbilities().getFlying()) {
                 this.isStarting = false;
                 this.showStatus('§aStrafing started!');
             } else if (tick > 60) {
-                // Timeout - Retry
-                this.startTickCounter = 0;
+                this.startTickCounter = 0; // Retry
             }
         }
     }
 
-    private tick() {
-        try {
-            if (!this.isRunning) return;
+    private trackDistance(player: any) {
+        const pPos = player.getPos();
+        if (this.lastPos) {
+            const dMove = Math.sqrt(
+                Math.pow(pPos.getX() - this.lastPos.x, 2) +
+                    Math.pow(pPos.getY() - this.lastPos.y, 2) +
+                    Math.pow(pPos.getZ() - this.lastPos.z, 2)
+            );
+            this.totalDistance += dMove;
+        }
+        this.lastPos = { x: pPos.getX(), y: pPos.getY(), z: pPos.getZ() };
+    }
 
-            // If paused, only check for re-entry, otherwise skip main logic
-            if (this.isPaused) {
-                const player = Player.getPlayer();
-                if (!player) return;
-                const pPos = player.getPos();
-                if (!this.isOutOfBounds(pPos)) { // Re-entered bounds
-                    this.resume();
-                }
-                return; // Skip rest of tick logic while paused
-            }
+    private updateRotation(player: any, dir: Direction) {
+        const { '1': p1, '2': p2 } = this.config.position;
+        // Calculate center-to-center vector
+        const c1 = { x: p1.x + 0.5, z: p1.z + 0.5 };
+        const c2 = { x: p2.x + 0.5, z: p2.z + 0.5 };
 
-            if (this.isStarting) {
-                this.handleStartup();
-                return;
-            }
+        const dx = c2.x - c1.x;
+        const dz = c2.z - c1.z;
 
-            const player = Player.getPlayer();
-            if (!player) return;
+        const pathYaw = -Math.atan2(dx, dz) * (180 / Math.PI);
+        const lookYaw = pathYaw - 90;
 
-            const pPos = player.getPos();
+        const pitchConfig = this.config.options.pitch[dir === 'left' ? 'left' : 'right'];
+        const pitch = pitchConfig !== null ? pitchConfig : player.getPitch();
 
-            // Change this from stop() to pause()
-            if (this.isOutOfBounds(pPos)) {
-                this.pause(); // Now pauses, doesn't stop
-                return;
-            }
+        player.lookAt(lookYaw, pitch);
+    }
 
-            // Auto-re-enable flight if lost
-            if (!player.getAbilities().getFlying()) {
-                this.isStarting = true;
-                this.startTickCounter = 0;
-                this.cleanupKeys();
-                return;
-            }
+    private checkTargetSwitch(player: any, dir: Direction) {
+        const { '1': p1, '2': p2 } = this.config.position;
+        const target = this.currentTarget === 1 ? p1 : p2;
+        const pPos = player.getPos();
 
-            if (Hud.getOpenScreen()) {
-                this.cleanupKeys();
-                return;
-            }
+        const dist = Math.sqrt(Math.pow(pPos.getX() - target.x, 2) + Math.pow(pPos.getZ() - target.z, 2));
+        const threshold = this.config.options.threshold[dir === 'left' ? 'left' : 'right'];
 
-            // --- Distance Tracking ---
-            if (this.lastPos) {
-                const dMove = Math.sqrt(
-                    Math.pow(pPos.getX() - this.lastPos.x, 2) +
-                        Math.pow(pPos.getY() - this.lastPos.y, 2) +
-                        Math.pow(pPos.getZ() - this.lastPos.z, 2)
-                );
-                this.totalDistance += dMove;
-            }
-            this.lastPos = { x: pPos.getX(), y: pPos.getY(), z: pPos.getZ() };
-
-            // --- Calculation ---
-            const _1 = this.config.position['1'];
-            const _2 = this.config.position['2'];
-            const c1 = { x: _1.x + 0.5, y: _1.y, z: _1.z + 0.5 };
-            const c2 = { x: _2.x + 0.5, y: _2.y, z: _2.z + 0.5 };
-
-            const dxRaw = c2.x - c1.x;
-            const dzRaw = c2.z - c1.z;
-            const len = Math.sqrt(dxRaw * dxRaw + dzRaw * dzRaw);
-
-            // Targets
-            const t1 = { x: c1.x, y: c1.y, z: c1.z };
-            const t2 = { x: c2.x, y: c2.y, z: c2.z };
-
-            // --- Look Logic ---
-            const pathYaw = -Math.atan2(dxRaw, dzRaw) * (180 / Math.PI);
-            const lookYaw = pathYaw - 90;
-
-            // Determine current 'direction' phase
-            // If target is 2, we are moving 'right' (towards 2) relative to start
-            // If target is 1, we are moving 'left' (towards 1)
-            const currentDirection: 'left' | 'right' = this.currentTarget === 2 ? 'right' : 'left';
-
-            const pitchConfig = this.config.options.pitch[currentDirection];
-            const pitch = pitchConfig !== null ? pitchConfig : player.getPitch();
-            player.lookAt(lookYaw, pitch);
-
-            // --- Switching Targets ---
-            const targetPos = this.currentTarget === 1 ? t1 : t2;
-            const dist = Math.sqrt(Math.pow(pPos.getX() - targetPos.x, 2) + Math.pow(pPos.getZ() - targetPos.z, 2));
-
-            const threshold = this.config.options.threshold[currentDirection];
-            if (dist < threshold) {
-                this.currentTarget = this.currentTarget === 1 ? 2 : 1;
-            }
-
-            // --- HUD ---
-            this.updateHud(currentDirection);
-
-            // --- Inputs ---
-            this.handleInputs(currentDirection);
-        } catch (e) {
-            Chat.log('§cError in strafe tick: ' + e);
-            this.stop();
+        if (dist < threshold) {
+            this.currentTarget = this.currentTarget === 1 ? 2 : 1;
         }
     }
 
-    private updateHud(currentDirection: Direction) {
+    private updateHud(dir: Direction) {
         if (Date.now() < this.statusExpiry) {
             Chat.actionbar(this.statusMessage);
             return;
@@ -461,57 +435,53 @@ class StrafingScript {
         const m = Math.floor((elapsed % 3600) / 60);
         const s = elapsed % 60;
 
-        const timeParts = [];
-        if (h > 0) timeParts.push(`${h}h`);
-        if (m > 0) timeParts.push(`${m}m`);
-        if (h === 0 && m === 0) timeParts.push(`${s.toFixed(1)}s`);
-        else if (Math.floor(s) > 0) timeParts.push(`${Math.floor(s)}s`);
-        if (timeParts.length === 0) timeParts.push('0.0s');
+        const timeStr = `${h > 0 ? h + 'h ' : ''}${m > 0 || h > 0 ? m + 'm ' : ''}${s.toFixed(1)}s`;
 
-        const timeString = timeParts.join(' ');
-        const sneak = this.config.options.sneak[currentDirection] ? 'ON' : 'OFF';
-        const interact = this.config.options.interact[currentDirection].mode;
+        const refDir = dir === 'left' ? 'left' : 'right';
+        const sneak = this.config.options.sneak[refDir] ? 'ON' : 'OFF';
+        const interact = this.config.options.interact[refDir].mode;
 
         Chat.actionbar(
-            `§eDist: ${this.totalDistance.toFixed(1)}m | Time: ${timeString} | Dir: ${currentDirection.toUpperCase()} | Sneak: ${sneak} | Int: ${interact}`
+            `§eDist: ${this.totalDistance.toFixed(1)}m | Time: ${timeStr} | Dir: ${dir.toUpperCase()} | Sneak: ${sneak} | Int: ${interact}`
         );
     }
 
-    private handleInputs(dir: 'left' | 'right') {
-        // Movement
-        if (dir === 'right') {
-            this.keys.right.set(true);
-            this.keys.left.set(false);
-        } else {
-            this.keys.right.set(false);
-            this.keys.left.set(true);
-        }
+    private handleInputs(dir: Direction) {
+        const refDir = dir === 'left' ? 'left' : 'right';
+
+        // Movement Keys
+        this.keys.right.set(dir === 'right');
+        this.keys.left.set(dir === 'left');
 
         // Sneak
-        this.keys.sneak.set(this.config.options.sneak[dir]);
+        this.keys.sneak.set(this.config.options.sneak[refDir]);
 
-        // Interact
-        const interact = this.config.options.interact[dir];
-        const key = interact.key === 'left' ? this.keys.mouseLeft : this.keys.mouseRight;
-        const otherKey = interact.key === 'left' ? this.keys.mouseRight : this.keys.mouseLeft;
+        // Interaction
+        const interact = this.config.options.interact[refDir];
+        const activeKey = interact.key === 'left' ? this.keys.mouseLeft : this.keys.mouseRight;
+        const inactiveKey = interact.key === 'left' ? this.keys.mouseRight : this.keys.mouseLeft;
 
-        // Release other key to prevent stuck keys
-        otherKey.set(false);
+        inactiveKey.set(false);
 
         if (interact.mode === 'click') {
-            const currentCps = interact.cps ?? this.defaultConfig.options.interact[dir].cps ?? 10;
-            const delayMs = 1000 / currentCps;
-            if (Date.now() - this.lastClickTime[dir] >= delayMs/2) {
-                if (key.pressed) key.release();
-                else key.hold();
+            const cps = interact.cps || 10;
+            const delayMs = 1000 / cps;
+
+            // Use generic object indexing to store last click time safely
+            const lastClick = (this.lastClickTime as any)[refDir] || 0;
+
+            if (Date.now() - lastClick >= delayMs) {
+                // Perform a quick click
+                if (activeKey.pressed) activeKey.release();
+                else {
+                    activeKey.hold();
+                    (this.lastClickTime as any)[refDir] = Date.now();
+                }
             }
-            // } else {
-            //     key.set(true);
-            // }
         } else if (interact.mode === 'hold') {
-            key.set(true);
+            activeKey.set(true);
         } else {
-            key.set(false);
+            activeKey.set(false);
         }
     }
 }
@@ -526,7 +496,6 @@ const antiAFK = new AntiAFK((active) => {
     else strafer.resume();
 });
 
-// Export cleanup for JsMacros
 (event as any).stopListener = JavaWrapper.methodToJava(() => strafer.stop());
 
 // =============================================================================
@@ -536,7 +505,6 @@ const antiAFK = new AntiAFK((active) => {
 const strafe = CommandManager.create('strafe');
 
 strafe.literal('start').executes(() => strafer.start());
-
 strafe.literal('stop').executes(() => strafer.stop());
 
 const set = strafe.literal('set');
@@ -561,98 +529,40 @@ set.literal('sneak')
     .suggestMatching(['both', 'left', 'right'])
     .executes((ctx) => {
         const dir = ctx.getArg('direction');
-        if (dir !== 'both' && dir !== 'left' && dir !== 'right') {
-            Chat.log('§cInvalid direction. Options: both, left, right');
+        if (!['both', 'left', 'right'].includes(dir)) {
+            Chat.log('§cInvalid direction.');
             return;
         }
         strafer.setSneak(ctx.getArg('state'), dir as Direction);
     });
 
-const interact = set.literal('interact');
+const interactCmd = set.literal('interact');
 
-interact
+interactCmd
     .literal('mode')
     .argument('mode', 'word')
     .suggestMatching(['hold', 'click', 'none'])
-    .executes((ctx) => {
-        const mode = ctx.getArg('mode');
-        if (mode !== 'hold' && mode !== 'click' && mode !== 'none') {
-            Chat.log('§cInvalid mode. Options: hold, click, none');
-            return;
-        }
-        strafer.setInteract({ mode: mode as InteractionMode });
-    })
+    .executes((ctx) => strafer.setInteract({ mode: ctx.getArg('mode') }))
     .argument('direction', 'word')
     .suggestMatching(['both', 'left', 'right'])
-    .executes((ctx) => {
-        const mode = ctx.getArg('mode');
-        const dir = ctx.getArg('direction');
-        if (mode !== 'hold' && mode !== 'click' && mode !== 'none') {
-            Chat.log('§cInvalid mode. Options: hold, click, none');
-            return;
-        }
-        if (dir !== 'both' && dir !== 'left' && dir !== 'right') {
-            Chat.log('§cInvalid direction. Options: both, left, right');
-            return;
-        }
-        strafer.setInteract({ mode: mode as InteractionMode, direction: dir as Direction });
-    });
+    .executes((ctx) => strafer.setInteract({ mode: ctx.getArg('mode'), direction: ctx.getArg('direction') }));
 
-interact
+interactCmd
     .literal('key')
     .argument('key', 'word')
     .suggestMatching(['left', 'right'])
-    .executes((ctx) => {
-        const key = ctx.getArg('key');
-        if (key !== 'left' && key !== 'right') {
-            Chat.log('§cInvalid key. Options: left, right');
-            return;
-        }
-        strafer.setInteract({ key: key as InteractionKey });
-    })
+    .executes((ctx) => strafer.setInteract({ key: ctx.getArg('key') }))
     .argument('direction', 'word')
     .suggestMatching(['both', 'left', 'right'])
-    .executes((ctx) => {
-        const key = ctx.getArg('key');
-        const dir = ctx.getArg('direction');
-        if (key !== 'left' && key !== 'right') {
-            Chat.log('§cInvalid key. Options: left, right');
-            return;
-        }
-        if (dir !== 'both' && dir !== 'left' && dir !== 'right') {
-            Chat.log('§cInvalid direction. Options: both, left, right');
-            return;
-        }
-        strafer.setInteract({ key: key as InteractionKey, direction: dir as Direction });
-    });
+    .executes((ctx) => strafer.setInteract({ key: ctx.getArg('key'), direction: ctx.getArg('direction') }));
 
-interact
+interactCmd
     .literal('cps')
     .argument('value', 'double')
-    .executes((ctx) => {
-        const cps = ctx.getArg('value');
-        if (cps <= 0 || cps > 20) {
-            // Limit CPS to a reasonable range, e.g., 1-20
-            Chat.log('§cCPS must be between 1 and 20.');
-            return;
-        }
-        strafer.setInteract({ cps: cps });
-    })
+    .executes((ctx) => strafer.setInteract({ cps: ctx.getArg('value') }))
     .argument('direction', 'word')
     .suggestMatching(['both', 'left', 'right'])
-    .executes((ctx) => {
-        const cps = ctx.getArg('value');
-        const dir = ctx.getArg('direction');
-        if (cps <= 0 || cps > 20) {
-            Chat.log('§cCPS must be between 1 and 20.');
-            return;
-        }
-        if (dir !== 'both' && dir !== 'left' && dir !== 'right') {
-            Chat.log('§cInvalid direction. Options: both, left, right');
-            return;
-        }
-        strafer.setInteract({ cps: cps, direction: dir as Direction });
-    });
+    .executes((ctx) => strafer.setInteract({ cps: ctx.getArg('value'), direction: ctx.getArg('direction') }));
 
 set.literal('pitch')
     .executes(() => strafer.setPitch({ pitch: null }))
@@ -660,39 +570,15 @@ set.literal('pitch')
     .executes((ctx) => strafer.setPitch({ pitch: ctx.getArg('value') }))
     .argument('direction', 'word')
     .suggestMatching(['both', 'left', 'right'])
-    .executes((ctx) => {
-        const dir = ctx.getArg('direction');
-        if (dir !== 'both' && dir !== 'left' && dir !== 'right') {
-            Chat.log('§cInvalid direction. Options: both, left, right');
-            return;
-        }
-        strafer.setPitch({ pitch: ctx.getArg('value'), direction: dir as Direction });
-    });
+    .executes((ctx) => strafer.setPitch({ pitch: ctx.getArg('value'), direction: ctx.getArg('direction') }));
 
 set.literal('threshold')
     .argument('value', 'double')
     .executes((ctx) => strafer.setDistanceThreshold(ctx.getArg('value')))
     .argument('direction', 'word')
     .suggestMatching(['both', 'left', 'right'])
-    .executes((ctx) => {
-        const dir = ctx.getArg('direction');
-        if (dir !== 'both' && dir !== 'left' && dir !== 'right') {
-            Chat.log('§cInvalid direction. Options: both, left, right');
-            return;
-        }
-        strafer.setDistanceThreshold(ctx.getArg('value'), dir as Direction);
-    });
+    .executes((ctx) => strafer.setDistanceThreshold(ctx.getArg('value'), ctx.getArg('direction')));
 
 strafe.register();
-
-// Global Event Listeners
-JsMacros.on(
-    'OpenScreen',
-    JavaWrapper.methodToJava(() => {
-        if (strafer.isRunning) {
-            strafer['cleanupKeys']();
-        }
-    })
-);
 
 export default event;

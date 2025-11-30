@@ -1,10 +1,10 @@
-
 import Config from '../libs/Config';
 import { Key } from '../libs/KeyManager';
 import { CommandManager } from '../libs/CommandBuilderWrapper';
 
 interface AntiAFKConfig {
     enabled: boolean;
+    triggerSlot: number;
 }
 
 export class AntiAFK {
@@ -12,10 +12,10 @@ export class AntiAFK {
     private readonly scriptId = 'antiafk';
     private readonly defaultConfig: AntiAFKConfig = {
         enabled: true,
+        triggerSlot: 15,
     };
 
     private config: AntiAFKConfig;
-    private readonly triggerSlot = 15;
     private isActive = false;
     private lastTitleTime = 0;
 
@@ -24,8 +24,13 @@ export class AntiAFK {
         sneak: new Key('key.keyboard.left.shift'),
         attack: new Key('key.mouse.left'),
     };
-    
+
     private onActivityChange?: (active: boolean) => void;
+
+    // Queue system
+    private actionQueue: string[] = [];
+    private isProcessingQueue = false;
+    private processingThread: any = null; // Java Thread
 
     constructor(onActivityChange?: (active: boolean) => void) {
         this.onActivityChange = onActivityChange;
@@ -35,20 +40,69 @@ export class AntiAFK {
     }
 
     private registerListeners() {
-        JsMacros.on('OpenScreen', JavaWrapper.methodToJava((event) => this.onOpenScreen(event)));
-        JsMacros.on('Tick', JavaWrapper.methodToJava((event) => this.onTick(event)));
-        this.listenForTitle();
+        JsMacros.on(
+            'OpenScreen',
+            JavaWrapper.methodToJava((event) => this.onOpenScreen(event as Events.OpenScreen))
+        );
+        JsMacros.on(
+            'Tick',
+            JavaWrapper.methodToJava((event) => this.onTick(event as Events.Tick))
+        );
+        JsMacros.on(
+            'Title',
+            JavaWrapper.methodToJava((event) => this.onTitleEvent(event))
+        );
     }
 
-    private listenForTitle() {
-        JsMacros.once('Title', JavaWrapper.methodToJava((event) => {
-            new (Packages.java.lang.Thread as any)(() => {
-                this.onTitle(event);
-                this.listenForTitle();
-            }).start();
-        }));
+    private onTitleEvent(event: any) {
+        if (!this.config.enabled) return;
+        // event.message is an IChatComponent, check docs if getString() is correct.
+        // Usually getString() or getUnformattedText() work.
+        const text = event.message ? event.message.getString() : '';
+        if (!text) return;
+
+        const lowerText = text.toLowerCase();
+        // If we are already active, we process everything. If not, we only process triggers.
+        if (!this.isActive && !this.isRelevantTitle(lowerText)) return;
+
+        this.actionQueue.push(text);
+        this.processQueue();
     }
-    
+
+    private isRelevantTitle(lowerText: string): boolean {
+        return (
+            lowerText.includes('look') ||
+            lowerText.includes('jump') ||
+            lowerText.includes('sneak') ||
+            lowerText.includes('punch') ||
+            lowerText.includes('attack')
+        );
+    }
+
+    private processQueue() {
+        if (this.isProcessingQueue) return;
+        if (this.actionQueue.length === 0) return;
+
+        this.isProcessingQueue = true;
+
+        this.processingThread = new (Packages.java.lang.Thread as any)(() => {
+            try {
+                while (this.actionQueue.length > 0) {
+                    const text = this.actionQueue.shift();
+                    if (text) this.onTitle(text);
+                    // Small delay between actions to prevent overlapping inputs
+                    Client.waitTick(2);
+                }
+            } catch (e) {
+                Chat.log('§cAntiAFK Thread Error: ' + e);
+            } finally {
+                this.isProcessingQueue = false;
+                this.processingThread = null;
+            }
+        });
+        this.processingThread.start();
+    }
+
     private setActive(active: boolean) {
         if (this.isActive === active) return;
         this.isActive = active;
@@ -65,6 +119,7 @@ export class AntiAFK {
         // 10 seconds timeout
         if (Date.now() - this.lastTitleTime > 10000) {
             this.setActive(false);
+            this.actionQueue = []; // Clear queue on timeout
         }
     }
 
@@ -75,37 +130,32 @@ export class AntiAFK {
     private onOpenScreen(event: Events.OpenScreen) {
         if (!this.config.enabled) return;
 
-        // We could add a check for specific GUI title if known, but for now rely on slot click
-        // Use a small delay to ensure the GUI is fully ready and item is present
-        const screen = event.screen; 
-        // Note: strict typings might be tricky with screen, check actual API if needed.
-        // But usually we can access inventory from player context once screen is open.
+        // Run logic in a thread because we use waitTick/sleep
+        new (Packages.java.lang.Thread as any)(() => {
+            try {
+                this.handleOpenScreenLogic(event);
+            } catch (e) {
+                Chat.log('§cAntiAFK Screen Error: ' + e);
+            }
+        }).start();
+    }
 
-        // We wait a bit then click
+    private handleOpenScreenLogic(event: Events.OpenScreen) {
+        // Wait a bit for GUI to populate
         Client.waitTick(5);
-        
-        // Check if screen is still open (user might have closed it quickly)
-        if (!Hud.getOpenScreen()) return;
 
-        // Check player to avoid NPE
+        if (!Hud.getOpenScreen()) return;
         if (!Player.getPlayer()) return;
-        
+
         const inv = Player.openInventory();
         if (!inv) return;
-        
-        // Filter for "Activity Check" GUI
-        if (!inv.getRawContainer().getTitleText().includes('Activity Check')) return;
 
-        // We assume if the GUI opens and we are enabled, we try to start the check.
-        // In a real scenario, we should probably check the container name or item name.
-        // But based on prompt: "A gui is opened containing an item... click to begin"
-        
-        // Double check if slot is valid for this inventory?
-        // inv.getSlot(this.config.triggerSlot) might throw or return null?
-        
+        const title = inv.getRawContainer().getTitleText();
+        if (!title || !title.toString().includes('Activity Check')) return;
+
         try {
-            inv.click(this.triggerSlot);
-            this.lastTitleTime = Date.now(); // Set time before activating to avoid instant timeout
+            inv.click(this.config.triggerSlot);
+            this.lastTitleTime = Date.now();
             this.setActive(true);
             Chat.log('§aAntiAFK: §7Clicking start slot...');
         } catch (e) {
@@ -113,21 +163,13 @@ export class AntiAFK {
         }
     }
 
-    private onTitle(event: Events.Title) {
-        if (!this.config.enabled) return;
-        
-        if (!event.message) return;
-        const text = event.message.getString().trim();
-        const lowerText = text.toLowerCase();
-        
-        // If we receive a title, and we are (or should be) active, update time
-        if (this.isActive || lowerText.includes('look') || lowerText.includes('jump') || lowerText.includes('sneak') || lowerText.includes('punch')) {
-             this.lastTitleTime = Date.now();
-             if (!this.isActive) this.setActive(true);
-        }
+    private onTitle(text: string) {
+        const textStr = text.trim();
+        const lowerText = textStr.toLowerCase();
 
-        // Logging for debug
-        // Chat.log('§7Title: ' + text);
+        // Update activity timestamp
+        this.lastTitleTime = Date.now();
+        if (!this.isActive) this.setActive(true);
 
         const player = Player.getPlayer();
         if (!player) return;
@@ -140,30 +182,30 @@ export class AntiAFK {
             player.lookAt(yaw - 90, player.getPitch());
             matched = true;
         } else if (lowerText.includes('look right')) {
-             Chat.log('§aAntiAFK: §7Looking RIGHT');
+            Chat.log('§aAntiAFK: §7Looking RIGHT');
             const yaw = player.getYaw();
             player.lookAt(yaw + 90, player.getPitch());
             matched = true;
         } else if (lowerText.includes('look down')) {
-             Chat.log('§aAntiAFK: §7Looking DOWN');
+            Chat.log('§aAntiAFK: §7Looking DOWN');
             player.lookAt(player.getYaw(), 90);
             matched = true;
         } else if (lowerText.includes('look up')) {
-             Chat.log('§aAntiAFK: §7Looking UP');
+            Chat.log('§aAntiAFK: §7Looking UP');
             player.lookAt(player.getYaw(), -90);
             matched = true;
         } else if (lowerText.includes('jump')) {
-             Chat.log('§aAntiAFK: §7Jumping');
+            Chat.log('§aAntiAFK: §7Jumping');
             this.keys.jump.click();
             matched = true;
         } else if (lowerText.includes('sneak')) {
-             Chat.log('§aAntiAFK: §7Sneaking');
+            Chat.log('§aAntiAFK: §7Sneaking');
             this.keys.sneak.set(true);
             Client.waitTick(10);
             this.keys.sneak.set(false);
             matched = true;
         } else if (lowerText.includes('punch') || lowerText.includes('attack')) {
-             Chat.log('§aAntiAFK: §7Punching');
+            Chat.log('§aAntiAFK: §7Punching');
             this.keys.attack.click();
             matched = true;
         }
@@ -176,11 +218,20 @@ export class AntiAFK {
     private registerCommands() {
         const cmd = CommandManager.create('antiafk');
 
-        cmd.literal('toggle')
-            .executes(() => {
-                this.config.enabled = !this.config.enabled;
+        cmd.literal('toggle').executes(() => {
+            this.config.enabled = !this.config.enabled;
+            this.saveConfig();
+            Chat.log(`§7AntiAFK is now ${this.config.enabled ? '§aENABLED' : '§cDISABLED'}`);
+        });
+
+        cmd.literal('set')
+            .literal('slot')
+            .argument('slot', 'int')
+            .executes((ctx) => {
+                const slot = ctx.getArg('slot');
+                this.config.triggerSlot = slot;
                 this.saveConfig();
-                Chat.log(`§7AntiAFK is now ${this.config.enabled ? '§aENABLED' : '§cDISABLED'}`);
+                Chat.log(`§7AntiAFK trigger slot set to §a${slot}`);
             });
 
         cmd.register();
