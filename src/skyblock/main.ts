@@ -1,5 +1,5 @@
 import { updateScript } from '../libs/Updater';
-// updateScript(file.getAbsolutePath(), 'jayc331/JSMacros-Scripts', './config/jayc331-config.json');
+updateScript(file.getAbsolutePath(), 'jayc331/JSMacros-Scripts', './config/jayc331-config.json');
 
 import Config from '../libs/Config';
 import { AntiAFK } from './AntiAFK';
