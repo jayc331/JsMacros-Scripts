@@ -44,6 +44,12 @@ interface StrafingConfig {
     options: StrafingOptions;
 }
 
+interface ClickState {
+    nextPressTime: number;
+    releaseTime: number;
+    isPressed: boolean;
+}
+
 // =============================================================================
 // Main Script Class
 // =============================================================================
@@ -84,7 +90,11 @@ class StrafingScript {
     // UI/Timing
     private statusMessage = '';
     private statusExpiry = 0;
-    private lastClickTime: { left: number; right: number } = { left: 0, right: 0 };
+    private clickStates: Record<'left' | 'right', ClickState> = {
+        left: { nextPressTime: 0, releaseTime: 0, isPressed: false },
+        right: { nextPressTime: 0, releaseTime: 0, isPressed: false },
+    };
+    private currentSelection: any = null;
 
     // Key definitions
     private readonly keys = {
@@ -192,6 +202,16 @@ class StrafingScript {
             JsMacros.off(this.tickListener);
             this.tickListener = null;
         }
+        
+        // Clear visuals
+        try {
+            if (this.currentSelection) {
+                const primary = BaritoneAPI.getProvider().getPrimaryBaritone();
+                primary.getSelectionManager().removeSelection(this.currentSelection);
+                this.currentSelection = null;
+            }
+        } catch (e) {}
+
         this.startTime = 0;
         this.totalDistance = 0;
         this.showStatus('§cStrafing stopped.');
@@ -218,6 +238,12 @@ class StrafingScript {
         this.totalDistance = 0;
         this.lastPos = null;
 
+        // Reset click states
+        this.clickStates = {
+            left: { nextPressTime: 0, releaseTime: 0, isPressed: false },
+            right: { nextPressTime: 0, releaseTime: 0, isPressed: false },
+        };
+
         this.updateVisuals();
 
         if (!this.tickListener) {
@@ -232,13 +258,19 @@ class StrafingScript {
     private updateVisuals() {
         try {
             const primary = BaritoneAPI.getProvider().getPrimaryBaritone();
+            
+            if (this.currentSelection) {
+                primary.getSelectionManager().removeSelection(this.currentSelection);
+                this.currentSelection = null;
+            }
+
             const { '1': p1, '2': p2 } = this.config.position;
 
             if (!isNaN(p1.x) && !isNaN(p2.x)) {
                 // BetterBlockPos constructor expects ints
                 const bp1 = new (BetterBlockPos as any)(Math.floor(p1.x), Math.floor(p1.y), Math.floor(p1.z));
                 const bp2 = new (BetterBlockPos as any)(Math.floor(p2.x), Math.floor(p2.y), Math.floor(p2.z));
-                primary.getSelectionManager().addSelection(bp1, bp2);
+                this.currentSelection = primary.getSelectionManager().addSelection(bp1, bp2);
             }
         } catch (e) {
             Chat.log(`§cVisuals Error: ${e}`);
@@ -309,10 +341,11 @@ class StrafingScript {
             }
 
             // 4. Flight Recovery
-            if (!player.getAbilities().getFlying()) {
+            if (!player.getAbilities().getFlying() && !this.isStarting) {
                 this.isStarting = true;
                 this.startTickCounter = 0;
                 this.cleanupKeys();
+                Chat.log('§7Enabling flight...');
             }
 
             if (this.isStarting) {
@@ -341,21 +374,27 @@ class StrafingScript {
                 this.showStatus('§aStrafing started!');
                 return;
             }
-            Chat.log('§7Enabling flight...');
         }
 
         const tick = this.startTickCounter++;
 
-        // Flight activation sequence (Jump spam)
-        if (tick === 0 || tick === 4) this.keys.jump.set(true);
-        if (tick === 2 || tick === 25) this.keys.jump.set(false);
+        // Flight activation sequence (Fast Double Jump)
+        // Tick 0: Press
+        // Tick 2: Release
+        // Tick 4: Press (Toggle flight)
+        // Tick 6: Release
+        
+        if (tick === 0) this.keys.jump.set(true);
+        if (tick === 2) this.keys.jump.set(false);
+        if (tick === 4) this.keys.jump.set(true);
+        if (tick === 6) this.keys.jump.set(false);
 
-        if (tick > 25) {
+        if (tick > 6) {
             if (player.getAbilities().getFlying()) {
                 this.isStarting = false;
                 this.showStatus('§aStrafing started!');
-            } else if (tick > 60) {
-                this.startTickCounter = 0; // Retry
+            } else if (tick > 20) { // Retry after 1 second
+                this.startTickCounter = 0; 
             }
         }
     }
@@ -447,18 +486,39 @@ class StrafingScript {
 
         if (interact.mode === 'click') {
             const cps = interact.cps || 10;
-            const delayMs = 1000 / cps;
+            const interval = 1000 / cps;
+            const state = this.clickStates[refDir];
+            const now = Date.now();
 
-            // Use generic object indexing to store last click time safely
-            const lastClick = (this.lastClickTime as any)[refDir] || 0;
+            // Phase 1: Release if time has passed
+            if (state.isPressed && now >= state.releaseTime) {
+                activeKey.set(false);
+                state.isPressed = false;
+                // Return early to ensure at least one tick of 'release' state
+                // before pressing again. This prevents "phantom releases" where
+                // the key is released and re-pressed in the same tick.
+                return;
+            }
 
-            if (Date.now() - lastClick >= delayMs) {
-                // Perform a quick click
-                if (activeKey.pressed) activeKey.release();
-                else {
-                    activeKey.hold();
-                    (this.lastClickTime as any)[refDir] = Date.now();
-                }
+            // Phase 2: Press if time has passed and not currently pressing
+            if (!state.isPressed && now >= state.nextPressTime) {
+                activeKey.set(true);
+                state.isPressed = true;
+
+                // Dynamic hold time based on CPS to ensure reliability
+                // Aim for ~60-70% duty cycle, but ensure at least 60ms if possible (for reliable server tick detection)
+                // and ensure we leave at least 25ms gap for the release logic.
+                
+                const maxPossibleHold = Math.max(0, interval - 40); // Leave ~40ms gap
+                const targetHold = Math.min(maxPossibleHold, Math.max(60, interval * 0.6));
+                const randomness = Math.min(30, maxPossibleHold - targetHold); // Add jitter if room exists
+
+                const holdTime = targetHold + Math.random() * randomness;
+                
+                state.releaseTime = now + holdTime;
+                
+                // Schedule next press
+                state.nextPressTime = Math.max(now, state.nextPressTime) + interval;
             }
         } else if (interact.mode === 'hold') {
             activeKey.set(true);

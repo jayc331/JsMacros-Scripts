@@ -4,15 +4,14 @@ import { CommandManager } from '../libs/CommandBuilderWrapper';
 
 interface AntiAFKConfig {
     enabled: boolean;
-    triggerSlot: number;
 }
 
 export class AntiAFK {
-    private readonly configPath = './config/jayc331-antiafk.json';
+    private readonly configPath = './config/jayc331-config.json';
     private readonly scriptId = 'antiafk';
+    private readonly TRIGGER_SLOT = 13;
     private readonly defaultConfig: AntiAFKConfig = {
         enabled: true,
-        triggerSlot: 13,
     };
 
     private config: AntiAFKConfig;
@@ -187,7 +186,7 @@ export class AntiAFK {
         if (!title || !title.toString().includes('Activity Check')) return;
 
         try {
-            inv.click(this.config.triggerSlot);
+            inv.click(this.TRIGGER_SLOT);
             this.lastTitleTime = Date.now();
             this.setActive(true);
             Chat.log('§aAntiAFK: §7Clicking start slot...');
@@ -205,16 +204,18 @@ export class AntiAFK {
             Chat.log(`§7AntiAFK is now ${this.config.enabled ? '§aENABLED' : '§cDISABLED'}`);
         });
 
-        cmd.literal('set')
-            .literal('slot')
-            .argument('slot', 'int')
-            .executes((ctx) => {
-                const slot = ctx.getArg('slot');
-                this.config.triggerSlot = slot;
-                this.saveConfig();
-                Chat.log(`§7AntiAFK trigger slot set to §a${slot}`);
-            });
+        cmd.literal('enable').executes(() => {
+            this.config.enabled = true;
+            this.saveConfig();
+            Chat.log('§7AntiAFK is now §aENABLED');
+        });
 
+        cmd.literal('disable').executes(() => {
+            this.config.enabled = false;
+            this.saveConfig();
+            Chat.log('§7AntiAFK is now §cDISABLED');
+        });
+            
         cmd.register();
     }
 }
