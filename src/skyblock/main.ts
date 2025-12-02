@@ -3,6 +3,7 @@ updateScript(file.getAbsolutePath(), 'jayc331/JSMacros-Scripts', './config/jayc3
 
 import Config from '../libs/Config';
 import { AntiAFK } from './AntiAFK';
+import { PhantomBlocks } from './PhantomBlocks';
 import { BaritoneAPI, BetterBlockPos } from '../libs/BaritoneAPIProvider';
 import { Key } from '../libs/KeyManager';
 import { CommandManager } from '../libs/CommandBuilderWrapper';
@@ -37,6 +38,7 @@ interface StrafingOptions {
     interact: DirectionConfig<InteractionConfig>;
     pitch: DirectionConfig<number | null>;
     threshold: DirectionConfig<number>;
+    flight: boolean;
 }
 
 interface StrafingConfig {
@@ -68,6 +70,7 @@ class StrafingScript {
             },
             pitch: { left: -2, right: -10 },
             threshold: { left: 0.5, right: 0.5 },
+            flight: true,
         },
     };
 
@@ -135,7 +138,7 @@ class StrafingScript {
     /**
      * Updates a directional configuration option safely.
      */
-    private updateOption<K extends keyof StrafingOptions>(
+    private updateOption<K extends 'sneak' | 'interact' | 'pitch' | 'threshold'>(
         key: K,
         direction: Direction,
         updater: (current: StrafingOptions[K]['left']) => StrafingOptions[K]['left']
@@ -190,6 +193,12 @@ class StrafingScript {
         this.showStatus(`§7Interact set to §a${ref.mode}§7 (${ref.key}, ${ref.cps} CPS) for §e${direction}`);
     }
 
+    public setFlight(state: boolean) {
+        this.config.options.flight = state;
+        this.saveConfig();
+        this.showStatus(`§7Flight recovery set to §a${state}`);
+    }
+
     // =========================================================================
     // Control Logic
     // =========================================================================
@@ -202,7 +211,7 @@ class StrafingScript {
             JsMacros.off(this.tickListener);
             this.tickListener = null;
         }
-        
+
         // Clear visuals
         try {
             if (this.currentSelection) {
@@ -231,7 +240,7 @@ class StrafingScript {
 
         this.isRunning = true;
         this.captchaProceed = true;
-        this.isStarting = true;
+        this.isStarting = this.config.options.flight;
         this.startTickCounter = 0;
         this.currentTarget = 2;
         this.startTime = Date.now();
@@ -252,13 +261,18 @@ class StrafingScript {
                 JavaWrapper.methodToJava(() => this.tick())
             );
         }
-        this.showStatus('§aStrafing initializing...');
+
+        if (this.isStarting) {
+            this.showStatus('§aStrafing initializing...');
+        } else {
+            this.showStatus('§aStrafing started!');
+        }
     }
 
     private updateVisuals() {
         try {
             const primary = BaritoneAPI.getProvider().getPrimaryBaritone();
-            
+
             if (this.currentSelection) {
                 primary.getSelectionManager().removeSelection(this.currentSelection);
                 this.currentSelection = null;
@@ -315,6 +329,12 @@ class StrafingScript {
 
     private tick() {
         try {
+            // Force allowPaused to true (field_1695)
+            const mc = Client.getMinecraft();
+            const field = Reflection.getDeclaredField(mc.getClass(), 'field_1695');
+            field.setAccessible(true);
+            field.set(mc, true);
+
             if (!this.isRunning) return;
 
             const player = Player.getPlayer();
@@ -333,15 +353,15 @@ class StrafingScript {
                 this.showStatus('§eStrafing paused (Out of Bounds).', 100);
                 return;
             }
-            
+
             // 3. Screen Check (Inventory Open)
             if (Hud.getOpenScreen()) {
-                 this.cleanupKeys();
-                 return;
+                this.cleanupKeys();
+                return;
             }
 
             // 4. Flight Recovery
-            if (!player.getAbilities().getFlying() && !this.isStarting) {
+            if (this.config.options.flight && !player.getAbilities().getFlying() && !this.isStarting) {
                 this.isStarting = true;
                 this.startTickCounter = 0;
                 this.cleanupKeys();
@@ -383,7 +403,7 @@ class StrafingScript {
         // Tick 2: Release
         // Tick 4: Press (Toggle flight)
         // Tick 6: Release
-        
+
         if (tick === 0) this.keys.jump.set(true);
         if (tick === 2) this.keys.jump.set(false);
         if (tick === 4) this.keys.jump.set(true);
@@ -393,8 +413,9 @@ class StrafingScript {
             if (player.getAbilities().getFlying()) {
                 this.isStarting = false;
                 this.showStatus('§aStrafing started!');
-            } else if (tick > 20) { // Retry after 1 second
-                this.startTickCounter = 0; 
+            } else if (tick > 20) {
+                // Retry after 1 second
+                this.startTickCounter = 0;
             }
         }
     }
@@ -508,15 +529,15 @@ class StrafingScript {
                 // Dynamic hold time based on CPS to ensure reliability
                 // Aim for ~60-70% duty cycle, but ensure at least 60ms if possible (for reliable server tick detection)
                 // and ensure we leave at least 25ms gap for the release logic.
-                
+
                 const maxPossibleHold = Math.max(0, interval - 40); // Leave ~40ms gap
                 const targetHold = Math.min(maxPossibleHold, Math.max(60, interval * 0.6));
                 const randomness = Math.min(30, maxPossibleHold - targetHold); // Add jitter if room exists
 
                 const holdTime = targetHold + Math.random() * randomness;
-                
+
                 state.releaseTime = now + holdTime;
-                
+
                 // Schedule next press
                 state.nextPressTime = Math.max(now, state.nextPressTime) + interval;
             }
@@ -536,6 +557,7 @@ const strafer = new StrafingScript();
 const antiAFK = new AntiAFK((active) => {
     strafer.captchaProceed = !active;
 });
+const phantomBlocks = new PhantomBlocks();
 
 (event as any).stopListener = JavaWrapper.methodToJava(() => strafer.stop());
 
@@ -619,6 +641,10 @@ set.literal('threshold')
     .argument('direction', 'word')
     .suggestMatching(['both', 'left', 'right'])
     .executes((ctx) => strafer.setDistanceThreshold(ctx.getArg('value'), ctx.getArg('direction')));
+
+set.literal('flight')
+    .argument('state', 'boolean')
+    .executes((ctx) => strafer.setFlight(ctx.getArg('state')));
 
 strafe.register();
 

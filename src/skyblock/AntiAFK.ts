@@ -29,6 +29,7 @@ export class AntiAFK {
     // State management for tick-based logic
     private processingActionUntil = 0;
     private unsneakAt = 0;
+    private unjumpAt = 0;
     private checkScreenAt = 0;
 
     constructor(onActivityChange?: (active: boolean) => void) {
@@ -114,7 +115,8 @@ export class AntiAFK {
             matched = true;
         } else if (lowerText.includes('jump')) {
             Chat.log('§aAntiAFK: §7Jumping');
-            this.keys.jump.click();
+            this.keys.jump.set(true);
+            this.unjumpAt = Date.now() + 100;
             matched = true;
         } else if (lowerText.includes('sneak')) {
             Chat.log('§aAntiAFK: §7Sneaking');
@@ -156,6 +158,12 @@ export class AntiAFK {
         if (this.unsneakAt > 0 && Date.now() > this.unsneakAt) {
             this.keys.sneak.set(false);
             this.unsneakAt = 0;
+        }
+
+        // Handle Delayed Unjump
+        if (this.unjumpAt > 0 && Date.now() > this.unjumpAt) {
+            this.keys.jump.set(false);
+            this.unjumpAt = 0;
         }
 
         // Handle Delayed Screen Check
@@ -215,7 +223,7 @@ export class AntiAFK {
             this.saveConfig();
             Chat.log('§7AntiAFK is now §cDISABLED');
         });
-            
+
         cmd.register();
     }
 }
