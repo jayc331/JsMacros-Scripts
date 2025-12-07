@@ -357,6 +357,8 @@ class StrafingScript {
             if (!this.captchaProceed) {
                 this.cleanupKeys();
                 this.showStatus('§eStrafing paused (AntiAFK).', 100);
+                // When paused by AntiAFK, we should also stop any flight startup attempts.
+                this.isStarting = false;
                 return;
             }
 
