@@ -580,7 +580,7 @@ const antiAFK = new AntiAFK((active) => {
 const phantomBlocks = new PhantomBlocks();
 const autoClicker = new AutoClicker();
 const triggerBot = new TriggerBot();
-const arrowRefiller = new ArrowRefiller();
+const arrowRefiller = new ArrowRefiller(strafer); // Pass strafer instance
 const fixHand = new FixHand();
 
 (event as any).stopListener = JavaWrapper.methodToJava(() => strafer.stop());

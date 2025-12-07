@@ -1,5 +1,6 @@
 import Config from '../libs/Config';
 import { CommandManager } from '../libs/CommandBuilderWrapper';
+import { StrafingScript } from './main'; // Import StrafingScript
 
 enum RefillState {
     IDLE,
@@ -15,6 +16,7 @@ enum RefillState {
 interface ArrowRefillerConfig {
     enabled: boolean;
     minArrows: number;
+    cooldownSeconds: number; // New: Cooldown period in seconds
 }
 
 export class ArrowRefiller {
@@ -22,19 +24,24 @@ export class ArrowRefiller {
     private readonly scriptId = 'arrowRefiller';
     private readonly defaultConfig: ArrowRefillerConfig = {
         enabled: true,
-        minArrows: 64
+        minArrows: 64,
+        cooldownSeconds: 300 // Default 5 minutes
     };
 
     private config: ArrowRefillerConfig;
     private refillState: RefillState = RefillState.IDLE;
     private stateTickCounter: number = 0;
     private lastInventoryCheckTime = 0;
+    private lastRefillTime = 0; // New: Timestamp of the last refill initiated
 
     // Constants for delays
     private readonly MAX_SCREEN_WAIT_TICKS = 60; // 3 seconds
     private readonly CLICK_DELAY_TICKS = 5;      // 250ms
 
-    constructor() {
+    private strafer: StrafingScript; // New: Reference to StrafingScript
+
+    constructor(strafer: StrafingScript) { // Modified constructor
+        this.strafer = strafer;
         this.config = Config.readConfig(this.configPath, this.defaultConfig, this.scriptId);
         this.registerListeners();
         this.registerCommands();
@@ -58,6 +65,16 @@ export class ArrowRefiller {
             if (Date.now() - this.lastInventoryCheckTime > 1000) {
                 this.lastInventoryCheckTime = Date.now();
                 if (!Hud.getOpenScreen() && !this.hasEnoughArrows()) {
+                    // Check cooldown
+                    if (Date.now() - this.lastRefillTime < this.config.cooldownSeconds * 1000) {
+                        // Chat.log(`§eArrowRefiller: §7Cooldown active. Next refill in ${((this.config.cooldownSeconds * 1000 - (Date.now() - this.lastRefillTime)) / 1000).toFixed(0)}s`);
+                        return;
+                    }
+                    // Check if player is within strafe bounds
+                    if (this.strafer.outOfBounds) {
+                        // Chat.log('§eArrowRefiller: §7Out of strafe bounds. Refill paused.');
+                        return;
+                    }
                     this.startRefillProcess();
                 }
             }
@@ -79,6 +96,7 @@ export class ArrowRefiller {
                     Chat.say('/shop arrow');
                     this.refillState = RefillState.WAIT_FOR_SCREEN;
                     this.stateTickCounter = 0; // Reset counter for new state
+                    this.lastRefillTime = Date.now(); // Record refill start time
                     break;
 
                 case RefillState.WAIT_FOR_SCREEN:
@@ -201,6 +219,15 @@ export class ArrowRefiller {
                 this.config.minArrows = amt;
                 this.saveConfig();
                 Chat.log(`§7ArrowRefill threshold set to §a${amt}`);
+            });
+        
+        cmd.literal('cooldown') // New command to set cooldown
+            .argument('seconds', 'int')
+            .executes((ctx) => {
+                const seconds = ctx.getArg('seconds');
+                this.config.cooldownSeconds = seconds;
+                this.saveConfig();
+                Chat.log(`§7ArrowRefill cooldown set to §a${seconds}s`);
             });
 
         cmd.literal('buy').executes(() => {
