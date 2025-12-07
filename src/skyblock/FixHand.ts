@@ -11,7 +11,7 @@ export class FixHand {
     private readonly scriptId = 'fixHand';
     private readonly defaultConfig: FixHandConfig = {
         enabled: true,
-        threshold: 0.20,
+        threshold: 0.2,
     };
 
     private config: FixHandConfig;
@@ -24,18 +24,21 @@ export class FixHand {
     }
 
     private registerListeners() {
-        JsMacros.on('Tick', JavaWrapper.methodToJava(() => this.onTick()));
+        JsMacros.on(
+            'Tick',
+            JavaWrapper.methodToJava(() => this.onTick())
+        );
     }
 
     private onTick() {
         if (!this.config.enabled) return;
-        
+
         // 5 seconds cooldown to prevent spamming the command
         if (Date.now() - this.lastFixTime < 5000) return;
 
         const player = Player.getPlayer();
         if (!player) return;
-        
+
         const item = player.getMainHand();
         if (!item || item.isEmpty()) return;
 
@@ -73,7 +76,7 @@ export class FixHand {
                 let val = ctx.getArg('percent');
                 // Optional: normalize if user enters 20 instead of 0.2
                 if (val > 1) val = val / 100;
-                
+
                 this.config.threshold = val;
                 this.saveConfig();
                 Chat.log(`§7FixHand threshold set to §a${(val * 100).toFixed(1)}%`);

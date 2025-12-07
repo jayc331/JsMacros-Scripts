@@ -25,7 +25,7 @@ export class ArrowRefiller {
     private readonly defaultConfig: ArrowRefillerConfig = {
         enabled: true,
         minArrows: 64,
-        cooldownSeconds: 300 // Default 5 minutes
+        cooldownSeconds: 300, // Default 5 minutes
     };
 
     private config: ArrowRefillerConfig;
@@ -36,11 +36,12 @@ export class ArrowRefiller {
 
     // Constants for delays
     private readonly MAX_SCREEN_WAIT_TICKS = 60; // 3 seconds
-    private readonly CLICK_DELAY_TICKS = 5;      // 250ms
+    private readonly CLICK_DELAY_TICKS = 5; // 250ms
 
     private strafer: StrafingScript; // New: Reference to StrafingScript
 
-    constructor(strafer: StrafingScript) { // Modified constructor
+    constructor(strafer: StrafingScript) {
+        // Modified constructor
         this.strafer = strafer;
         this.config = Config.readConfig(this.configPath, this.defaultConfig, this.scriptId);
         this.registerListeners();
@@ -48,7 +49,10 @@ export class ArrowRefiller {
     }
 
     private registerListeners() {
-        JsMacros.on('Tick', JavaWrapper.methodToJava(() => this.onTick()));
+        JsMacros.on(
+            'Tick',
+            JavaWrapper.methodToJava(() => this.onTick())
+        );
     }
 
     private onTick() {
@@ -110,7 +114,8 @@ export class ArrowRefiller {
                     break;
 
                 case RefillState.CLICK_SLOT_15:
-                    if (this.stateTickCounter >= this.CLICK_DELAY_TICKS) { // Wait a few ticks before clicking
+                    if (this.stateTickCounter >= this.CLICK_DELAY_TICKS) {
+                        // Wait a few ticks before clicking
                         if (!this.clickSlot(15)) {
                             this.resetState();
                             return;
@@ -119,7 +124,7 @@ export class ArrowRefiller {
                         this.stateTickCounter = 0;
                     }
                     break;
-                
+
                 case RefillState.WAIT_AFTER_CLICK_15:
                     if (this.stateTickCounter >= this.CLICK_DELAY_TICKS) {
                         this.refillState = RefillState.CLICK_SLOT_12;
@@ -128,7 +133,8 @@ export class ArrowRefiller {
                     break;
 
                 case RefillState.CLICK_SLOT_12:
-                    if (this.stateTickCounter >= this.CLICK_DELAY_TICKS) { // Wait a few ticks before clicking
+                    if (this.stateTickCounter >= this.CLICK_DELAY_TICKS) {
+                        // Wait a few ticks before clicking
                         if (!this.clickSlot(12)) {
                             this.resetState();
                             return;
@@ -220,7 +226,7 @@ export class ArrowRefiller {
                 this.saveConfig();
                 Chat.log(`§7ArrowRefill threshold set to §a${amt}`);
             });
-        
+
         cmd.literal('cooldown') // New command to set cooldown
             .argument('seconds', 'int')
             .executes((ctx) => {

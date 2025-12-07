@@ -61,7 +61,7 @@ interface ClickState {
 // Main Script Class
 // =============================================================================
 
-class StrafingScript {
+export class StrafingScript {
     private readonly configPath = './config/jayc331-config.json';
     private readonly scriptId = 'skyblock';
 

@@ -25,7 +25,10 @@ export class TriggerBot {
     }
 
     private registerListeners() {
-        JsMacros.on('Tick', JavaWrapper.methodToJava(() => this.onTick()));
+        JsMacros.on(
+            'Tick',
+            JavaWrapper.methodToJava(() => this.onTick())
+        );
     }
 
     private onTick() {
@@ -42,7 +45,7 @@ export class TriggerBot {
         // then verify distance if needed, but usually rayTraceEntity handles the intersection correctly.
         // We pass the float; JsMacros/Java usually handles Number -> int/double conversion or the method supports double.
         // If the method strictly cuts off at int, Math.ceil ensures we cover the range.
-        const traceDist = Math.ceil(this.config.reach); 
+        const traceDist = Math.ceil(this.config.reach);
         const target = player.rayTraceEntity(traceDist);
 
         if (target) {

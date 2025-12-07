@@ -25,7 +25,10 @@ export class AutoClicker {
     }
 
     private registerListeners() {
-        JsMacros.on('Tick', JavaWrapper.methodToJava(() => this.onTick()));
+        JsMacros.on(
+            'Tick',
+            JavaWrapper.methodToJava(() => this.onTick())
+        );
     }
 
     private onTick() {
@@ -49,7 +52,7 @@ export class AutoClicker {
                 // Add +/- 20% randomness
                 const variance = baseDelay * 0.2;
                 const random = Math.random() * (variance * 2) - variance;
-                
+
                 this.nextClickTime = now + baseDelay + random;
             } else {
                 // Release between clicks to respect CPS
