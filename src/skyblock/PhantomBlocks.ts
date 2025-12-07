@@ -37,7 +37,7 @@ export class PhantomBlocks {
         if (!player) return;
 
         // 1.0 means fully charged attack indicator
-        if (player.getAttackCooldownProgress() < 1.0) return;
+        // if (player.getAttackCooldownProgress() < 1.0) return;
 
         const pPos = player.getPos();
         const entities = World.getEntities();
@@ -81,7 +81,7 @@ export class PhantomBlocks {
     }
 
     private registerCommands() {
-        const cmd = CommandManager.create('phantomblocks');
+        const cmd = CommandManager.create('ghostpickaxe');
 
         cmd.literal('toggle').executes(() => {
             this.config.enabled = !this.config.enabled;

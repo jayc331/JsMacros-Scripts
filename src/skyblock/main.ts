@@ -4,6 +4,10 @@ updateScript(file.getAbsolutePath(), 'jayc331/JSMacros-Scripts', './config/jayc3
 import Config from '../libs/Config';
 import { AntiAFK } from './AntiAFK';
 import { PhantomBlocks } from './PhantomBlocks';
+import { AutoClicker } from './AutoClicker';
+import { TriggerBot } from './TriggerBot';
+import { ArrowRefiller } from './ArrowRefiller';
+import { FixHand } from './FixHand';
 import { BaritoneAPI, BetterBlockPos } from '../libs/BaritoneAPIProvider';
 import { Key } from '../libs/KeyManager';
 import { CommandManager } from '../libs/CommandBuilderWrapper';
@@ -39,6 +43,7 @@ interface StrafingOptions {
     pitch: DirectionConfig<number | null>;
     threshold: DirectionConfig<number>;
     flight: boolean;
+    swapItems: boolean;
 }
 
 interface StrafingConfig {
@@ -71,6 +76,7 @@ class StrafingScript {
             pitch: { left: -2, right: -10 },
             threshold: { left: 0.5, right: 0.5 },
             flight: true,
+            swapItems: false,
         },
     };
 
@@ -107,6 +113,7 @@ class StrafingScript {
         mouseRight: new Key('key.mouse.right'),
         sneak: new Key('key.keyboard.left.shift'),
         jump: new Key('key.keyboard.space'),
+        swap: new Key('key.keyboard.f'),
     };
 
     constructor() {
@@ -197,6 +204,12 @@ class StrafingScript {
         this.config.options.flight = state;
         this.saveConfig();
         this.showStatus(`§7Flight recovery set to §a${state}`);
+    }
+
+    public setSwapItems(state: boolean) {
+        this.config.options.swapItems = state;
+        this.saveConfig();
+        this.showStatus(`§7Swap Items set to §a${state}`);
     }
 
     // =========================================================================
@@ -462,7 +475,12 @@ class StrafingScript {
         const threshold = this.config.options.threshold[dir === 'left' ? 'left' : 'right'] || 0.5;
 
         if (dist < threshold) {
+            const oldTarget = this.currentTarget;
             this.currentTarget = this.currentTarget === 1 ? 2 : 1;
+
+            if (this.config.options.swapItems && this.currentTarget !== oldTarget) {
+                this.keys.swap.click();
+            }
         }
     }
 
@@ -558,6 +576,10 @@ const antiAFK = new AntiAFK((active) => {
     strafer.captchaProceed = !active;
 });
 const phantomBlocks = new PhantomBlocks();
+const autoClicker = new AutoClicker();
+const triggerBot = new TriggerBot();
+const arrowRefiller = new ArrowRefiller();
+const fixHand = new FixHand();
 
 (event as any).stopListener = JavaWrapper.methodToJava(() => strafer.stop());
 
@@ -645,6 +667,10 @@ set.literal('threshold')
 set.literal('flight')
     .argument('state', 'boolean')
     .executes((ctx) => strafer.setFlight(ctx.getArg('state')));
+
+set.literal('swap')
+    .argument('state', 'boolean')
+    .executes((ctx) => strafer.setSwapItems(ctx.getArg('state')));
 
 strafe.register();
 
