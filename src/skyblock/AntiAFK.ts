@@ -125,6 +125,7 @@ export class AntiAFK {
             matched = true;
         } else if (lowerText.includes('punch') || lowerText.includes('attack')) {
             Chat.log('§aAntiAFK: §7Punching');
+            player.lookAt("up")
             this.keys.attack.click();
             matched = true;
         }
