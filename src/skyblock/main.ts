@@ -8,6 +8,7 @@ import { AutoClicker } from './AutoClicker';
 import { TriggerBot } from './TriggerBot';
 import { ArrowRefiller } from './ArrowRefiller';
 import { FixHand } from './FixHand';
+import { PrisonUtils } from './PrisonUtils';
 import { BaritoneAPI, BetterBlockPos } from '../libs/BaritoneAPIProvider';
 import { Key } from '../libs/KeyManager';
 import { CommandManager } from '../libs/CommandBuilderWrapper';
@@ -582,6 +583,7 @@ const autoClicker = new AutoClicker();
 const triggerBot = new TriggerBot();
 const arrowRefiller = new ArrowRefiller(strafer); // Pass strafer instance
 const fixHand = new FixHand();
+const prisonUtils = new PrisonUtils();
 
 (event as any).stopListener = JavaWrapper.methodToJava(() => strafer.stop());
 
